@@ -1,0 +1,29 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "web",
+  "projectType": "application",
+  "sourceRoot": "apps/web/src",
+  "targets": {
+    "vendor": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node tools/vendor-assets.mjs"
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "outputs": ["{workspaceRoot}/dist/web"],
+      "dependsOn": ["vendor"],
+      "options": {
+        "command": "node tools/copy-app.mjs apps/web/src dist/web"
+      }
+    },
+    "serve": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["vendor"],
+      "options": {
+        "command": "http-server apps/web/src -p 4200 -c-1 -o"
+      }
+    }
+  }
+}

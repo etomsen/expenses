@@ -1,0 +1,9 @@
+node_modules
+dist
+.nx/cache
+.nx/workspace-data
+
+# Auto-vendored by the "vendor" target (tools/vendor-assets.mjs)
+apps/web/src/assets/alpine.min.js
+apps/web/src/assets/alpine-mask.min.js
+apps/web/src/assets/pico.min.css

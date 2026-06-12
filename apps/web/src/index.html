@@ -17,6 +17,7 @@
       <form
         style="max-width: 400px; margin: 0 auto"
         x-data="{
+          api: 'http://localhost:3000',
           form: {
             date: new Date().toISOString().slice(0, 10),
             amount: '',
@@ -26,6 +27,16 @@
           },
           currencies: ['EUR', 'RUB', 'BYN', 'USD'],
           categories: [],
+          saving: false,
+          message: '',
+          async init() {
+            try {
+              const res = await fetch(this.api + '/categories');
+              this.categories = await res.json();
+            } catch (e) {
+              this.message = 'Could not load categories';
+            }
+          },
           get amountValue() {
             return parseFloat(String(this.form.amount).replace(/,/g, ''));
           },
@@ -37,8 +48,39 @@
               !!this.form.category
             );
           },
-          submit() {
-            // TODO: send this.form to the backend
+          async submit() {
+            if (!this.isValid || this.saving) return;
+            const selected = this.categories.find((c) => c.category === this.form.category);
+            const payload = {
+              data: new Date(this.form.date).toISOString(),
+              amount: this.amountValue,
+              currency: this.form.currency,
+              desc: this.form.description,
+              category: this.form.category,
+              supercategory: selected ? selected.supercategory : ''
+            };
+            this.saving = true;
+            this.message = '';
+            try {
+              const res = await fetch(this.api + '/add', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+              });
+              if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error((err.errors || [err.error]).join(', ') || res.statusText);
+              }
+              const saved = await res.json();
+              this.message = 'Saved expense #' + saved.id;
+              this.form.amount = '';
+              this.form.description = '';
+              this.form.category = '';
+            } catch (e) {
+              this.message = 'Failed to save: ' + e.message;
+            } finally {
+              this.saving = false;
+            }
           }
         }"
         @submit.prevent="submit"
@@ -72,15 +114,17 @@
         <label for="category">Category</label>
         <select id="category" x-model="form.category" required>
           <option value="" disabled>Select a category</option>
-          <template x-for="c in categories" :key="c">
-            <option :value="c" x-text="c"></option>
+          <template x-for="c in categories" :key="c.category">
+            <option :value="c.category" x-text="c.category + ' (' + c.supercategory + ')'"></option>
           </template>
         </select>
 
         <label for="description">Description</label>
         <input id="description" type="text" x-model="form.description" />
 
-        <button type="submit" :disabled="!isValid">Add expense</button>
+        <button type="submit" :disabled="!isValid || saving" x-text="saving ? 'Saving…' : 'Add expense'"></button>
+
+        <p x-show="message" x-text="message"></p>
       </form>
     </main>
   </body>

@@ -125,7 +125,7 @@
         <article>
           <header>
             <button aria-label="Close" rel="prev" @click="if (!importing) showImport = false"></button>
-            <p><strong>Import CSV</strong></p>
+            <p><strong>Import</strong></p>
           </header>
           <p>Choose a .csv file with columns <strong>Date, Amount, Category, Desc</strong>. Unknown categories are imported as “Непонятно”.</p>
           <input
@@ -176,7 +176,14 @@
             }
           },
           get amountValue() {
-            return parseFloat(String(this.form.amount).replace(/,/g, ''));
+            // Accept either '.' or ',' as the decimal separator (the last one
+            // wins); any other separators are treated as thousands grouping.
+            const s = String(this.form.amount).replace(/\s/g, '');
+            const decPos = Math.max(s.lastIndexOf('.'), s.lastIndexOf(','));
+            if (decPos === -1) return parseFloat(s);
+            const intPart = s.slice(0, decPos).replace(/[.,]/g, '');
+            const fracPart = s.slice(decPos + 1).replace(/[.,]/g, '');
+            return parseFloat(intPart + '.' + fracPart);
           },
           get isValid() {
             return (
@@ -227,7 +234,7 @@
               placeholder="0.00"
               style="width: 100%"
               x-model="form.amount"
-              x-mask:dynamic="$money($input)"
+              @input="form.amount = form.amount.replace(/[^0-9.,]/g, '')"
               required
             />
           </div>

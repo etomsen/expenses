@@ -123,7 +123,7 @@
         <article>
           <header>
             <button aria-label="Close" rel="prev" @click="if (!importing) showImport = false"></button>
-            <p><strong>Import CSV</strong></p>
+            <p><strong>Import</strong></p>
           </header>
           <p>Choose a .csv file with columns <strong>Date, Amount, Category, Desc</strong>. Unknown categories are imported as “Непонятно”.</p>
           <input
@@ -150,13 +150,21 @@
       class="container"
       x-data="{
         expenses: [],
+        categories: [],
+        currencies: ['EUR', 'RUB', 'BYN', 'USD'],
         loading: true,
         message: '',
+        db: null,
+        showEdit: false,
+        saving: false,
+        editMessage: '',
+        edit: { id: null, date: '', amount: '', currency: 'EUR', category: '', description: '' },
         async init() {
           try {
-            const db = await window.__expenseDBReady;
-            await db.ready;
-            this.expenses = await db.listExpenses();
+            this.db = await window.__expenseDBReady;
+            await this.db.ready;
+            this.expenses = await this.db.listExpenses();
+            this.categories = await this.db.listCategories();
           } catch (e) {
             console.error(e);
             this.message = 'Could not load expenses';
@@ -166,6 +174,52 @@
         },
         formatDate(d) {
           return new Date(d).toISOString().slice(0, 10);
+        },
+        openEdit(e) {
+          this.editMessage = '';
+          this.edit = {
+            id: e.id,
+            date: this.formatDate(e.data),
+            amount: String(e.amount),
+            currency: e.currency,
+            category: e.category,
+            description: e.desc || ''
+          };
+          this.showEdit = true;
+        },
+        get editAmountValue() {
+          const s = String(this.edit.amount).replace(/\s/g, '');
+          const decPos = Math.max(s.lastIndexOf('.'), s.lastIndexOf(','));
+          if (decPos === -1) return parseFloat(s);
+          const intPart = s.slice(0, decPos).replace(/[.,]/g, '');
+          const fracPart = s.slice(decPos + 1).replace(/[.,]/g, '');
+          return parseFloat(intPart + '.' + fracPart);
+        },
+        get editValid() {
+          return !!this.edit.date && this.editAmountValue > 0 && !!this.edit.currency && !!this.edit.category;
+        },
+        async saveEdit() {
+          if (!this.editValid || this.saving) return;
+          const selected = this.categories.find((c) => c.category === this.edit.category);
+          this.saving = true;
+          this.editMessage = '';
+          try {
+            await this.db.updateExpense(this.edit.id, {
+              data: new Date(this.edit.date).toISOString(),
+              amount: this.editAmountValue,
+              currency: this.edit.currency,
+              desc: this.edit.description,
+              category: this.edit.category,
+              supercategory: selected ? selected.supercategory : ''
+            });
+            this.expenses = await this.db.listExpenses();
+            this.showEdit = false;
+          } catch (e) {
+            console.error(e);
+            this.editMessage = 'Failed to save: ' + e.message;
+          } finally {
+            this.saving = false;
+          }
         }
       }"
     >
@@ -182,6 +236,7 @@
             <th scope="col">Amount</th>
             <th scope="col">Category</th>
             <th scope="col">Description</th>
+            <th scope="col"></th>
           </tr>
         </thead>
         <tbody>
@@ -191,10 +246,81 @@
               <td x-text="e.amount + ' ' + e.currency"></td>
               <td x-text="e.category"></td>
               <td x-text="e.desc"></td>
+              <td style="text-align: right">
+                <a href="#" aria-label="Edit" @click.prevent="openEdit(e)">...</a>
+              </td>
             </tr>
           </template>
         </tbody>
       </table>
+
+      <!-- Edit expense modal (Pico) -->
+      <dialog :open="showEdit">
+        <article>
+          <header>
+            <button aria-label="Close" rel="prev" @click="if (!saving) showEdit = false"></button>
+            <p><strong>Edit expense</strong></p>
+          </header>
+
+          <label>
+            Date
+            <input type="date" x-model="edit.date" required />
+          </label>
+
+          <div style="display: flex; gap: 1rem; align-items: flex-end">
+            <div style="flex: 1">
+              <label>
+                Amount
+                <input
+                  type="text"
+                  inputmode="decimal"
+                  placeholder="0.00"
+                  x-model="edit.amount"
+                  @input="edit.amount = edit.amount.replace(/[^0-9.,]/g, '')"
+                  required
+                />
+              </label>
+            </div>
+            <div>
+              <label>
+                Currency
+                <select x-model="edit.currency" required>
+                  <template x-for="c in currencies" :key="c">
+                    <option :value="c" x-text="c"></option>
+                  </template>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <label>
+            Category
+            <select x-model="edit.category" required>
+              <option value="" disabled>Select a category</option>
+              <template x-for="c in categories" :key="c.category">
+                <option :value="c.category" x-text="c.category + ' (' + c.supercategory + ')'"></option>
+              </template>
+            </select>
+          </label>
+
+          <label>
+            Description
+            <input type="text" x-model="edit.description" />
+          </label>
+
+          <p x-show="editMessage" x-text="editMessage"></p>
+
+          <footer>
+            <button class="secondary" @click="showEdit = false" :disabled="saving">Cancel</button>
+            <button
+              @click="saveEdit()"
+              :disabled="!editValid || saving"
+              :aria-busy="saving"
+              x-text="saving ? 'Saving…' : 'Save'"
+            ></button>
+          </footer>
+        </article>
+      </dialog>
     </main>
   </body>
 </html>

@@ -146,6 +146,18 @@ export async function insertExpense({ data, amount, currency, desc, category, su
   return result.rows[0];
 }
 
+export async function updateExpense(id, { data, amount, currency, desc, category, supercategory }) {
+  const db = await dbPromise;
+  const result = await db.query(
+    `UPDATE expenses
+     SET data = $2, amount = $3, currency = $4, description = $5, category = $6, supercategory = $7
+     WHERE id = $1
+     RETURNING id, data, amount, currency, description AS desc, category, supercategory, created_at`,
+    [id, data, amount, currency, desc, category, supercategory]
+  );
+  return result.rows[0];
+}
+
 // Completely remove the database — closes the connection and deletes the
 // whole IndexedDB store (data AND tables). After this the app must reload;
 // on next launch createDb() rebuilds the schema and re-seeds from scratch.

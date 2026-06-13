@@ -43,6 +43,8 @@ const DEFAULT_CATEGORIES = [
   { category: 'Питомцы', supercategory: 'Обязанности' },
   { category: 'Близкие', supercategory: 'Обязанности' },
   { category: 'Путешешествие', supercategory: 'Путешествия' },
+  // Fallback bucket for CSV rows whose category can't be matched.
+  { category: 'Непонятно', supercategory: 'Непонятно' },
 ];
 
 // PGLite stores an "idb://<name>" database in an IndexedDB named "/pglite/<name>".
@@ -159,4 +161,166 @@ export async function resetDatabase() {
     const req = indexedDB.deleteDatabase(IDB_NAME);
     req.onsuccess = req.onerror = req.onblocked = () => resolve();
   });
+}
+
+// Category name (lower-cased) aliases for matching imported CSV rows.
+const CATEGORY_ALIASES = {
+  // "кафе и рестораны" was renamed to "Кофе и рестораны".
+  'кафе и рестораны': 'кофе и рестораны',
+};
+
+const FALLBACK_CATEGORY = { category: 'Непонятно', supercategory: 'Непонятно' };
+
+// Minimal RFC-4180-ish CSV parser: handles quoted fields, embedded commas
+// (e.g. the "Налоги, документы" category), escaped quotes and CRLF.
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else {
+        field += c;
+      }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ',') {
+      row.push(field);
+      field = '';
+    } else if (c === '\n') {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = '';
+    } else if (c !== '\r') {
+      field += c;
+    }
+  }
+  if (field !== '' || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}
+
+function parseAmount(raw) {
+  let a = String(raw || '').replace(/\s/g, '');
+  // "1,050.50" -> drop thousands commas; "23,6" -> decimal comma.
+  a = a.includes('.') ? a.replace(/,/g, '') : a.replace(',', '.');
+  return parseFloat(a);
+}
+
+// Import expenses from a CSV string. Columns: Date, Amount, Category, Desc
+// (matched by header name when present, otherwise by position). Categories
+// are matched case-insensitively against the DB; unmatched rows fall back to
+// "Непонятно". Returns { total, imported, unmatched, skipped }.
+export async function importCsv(text) {
+  const db = await dbPromise;
+
+  // Ensure the fallback category exists (older DBs were seeded without it).
+  await db.query(
+    `INSERT INTO category (category, supercategory) VALUES ($1, $2) ON CONFLICT (category) DO NOTHING`,
+    [FALLBACK_CATEGORY.category, FALLBACK_CATEGORY.supercategory]
+  );
+
+  // Build a lookup of existing categories keyed by lower-cased name.
+  const existing = (await db.query(`SELECT category, supercategory FROM category`)).rows;
+  const byLower = new Map();
+  for (const c of existing) byLower.set(c.category.toLowerCase(), c);
+
+  const resolveCategory = (raw) => {
+    let key = String(raw || '').trim().toLowerCase();
+    if (CATEGORY_ALIASES[key]) key = CATEGORY_ALIASES[key];
+    return byLower.get(key) || FALLBACK_CATEGORY;
+  };
+
+  const rows = parseCsv(text.replace(/^﻿/, ''));
+  if (rows.length === 0) return { total: 0, imported: 0, unmatched: 0, skipped: 0 };
+
+  // Detect a header row to map columns; otherwise assume positional order.
+  // Accepts both "Date/Amount" and the spreadsheet's "When/How much" names.
+  let start = 0;
+  let idx = { date: 0, amount: 1, category: 2, desc: 3, currency: -1 };
+  const header = rows[0].map((h) => h.trim().toLowerCase());
+  const find = (...names) => {
+    for (const n of names) {
+      const i = header.indexOf(n);
+      if (i !== -1) return i;
+    }
+    return -1;
+  };
+  const looksLikeHeader =
+    find('date', 'when') !== -1 || find('amount', 'how much') !== -1 || find('category') !== -1;
+  if (looksLikeHeader) {
+    start = 1;
+    idx = {
+      date: find('date', 'when'),
+      amount: find('amount', 'how much'),
+      category: find('category'),
+      desc: find('desc', 'description'),
+      currency: find('currency'),
+    };
+    if (idx.date === -1 || idx.amount === -1) {
+      throw new Error(
+        'CSV header must include a date (Date/When) and an amount (Amount/How much) column.'
+      );
+    }
+  }
+
+  let total = 0;
+  let imported = 0;
+  let unmatched = 0;
+  let skipped = 0;
+  const usageBump = new Map();
+
+  for (let r = start; r < rows.length; r++) {
+    const cols = rows[r];
+    // Skip fully blank lines.
+    if (cols.length === 1 && cols[0].trim() === '') continue;
+
+    const dateRaw = (cols[idx.date] || '').trim();
+    const amount = parseAmount(cols[idx.amount]);
+    if (!dateRaw && Number.isNaN(amount)) continue;
+    total++;
+
+    if (!dateRaw || Number.isNaN(amount)) {
+      skipped++;
+      continue;
+    }
+
+    const resolved = resolveCategory(idx.category >= 0 ? cols[idx.category] : '');
+    if (resolved === FALLBACK_CATEGORY) unmatched++;
+    const desc = idx.desc >= 0 ? (cols[idx.desc] || '').trim() : '';
+    const currency = idx.currency >= 0 && cols[idx.currency] ? cols[idx.currency].trim() : 'EUR';
+
+    try {
+      await db.query(
+        `INSERT INTO expenses (data, amount, currency, description, category, supercategory)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [dateRaw, amount, currency, desc, resolved.category, resolved.supercategory]
+      );
+      imported++;
+      usageBump.set(resolved.category, (usageBump.get(resolved.category) || 0) + 1);
+    } catch (e) {
+      console.warn('Skipped CSV row', r + 1, e);
+      skipped++;
+    }
+  }
+
+  // Best-effort: reflect imported rows in the usage counters.
+  try {
+    for (const [category, n] of usageBump) {
+      await db.query(`UPDATE category SET usage_count = usage_count + $2 WHERE category = $1`, [category, n]);
+    }
+  } catch (e) {
+    console.warn('Could not update usage counts after import:', e);
+  }
+
+  return { total, imported, unmatched, skipped };
 }

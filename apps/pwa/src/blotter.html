@@ -30,23 +30,53 @@
       x-data="{
         showReset: false,
         resetting: false,
+        showImport: false,
+        importing: false,
+        importFile: null,
+        importMessage: '',
         async reset() {
           if (this.resetting) return;
           this.resetting = true;
           try {
             const db = await window.__expenseDBReady;
             await db.resetDatabase();
+          } catch (e) { console.error(e); }
+          location.reload();
+        },
+        openImport() {
+          this.importFile = null;
+          this.importMessage = '';
+          this.showImport = true;
+        },
+        async runImport() {
+          if (this.importing || !this.importFile) return;
+          this.importing = true;
+          this.importMessage = '';
+          try {
+            const db = await window.__expenseDBReady;
+            const text = await this.importFile.text();
+            const r = await db.importCsv(text);
+            this.importMessage = 'Imported ' + r.imported + ' of ' + r.total + ' rows'
+              + (r.unmatched ? ', ' + r.unmatched + ' → Непонятно' : '')
+              + (r.skipped ? ', ' + r.skipped + ' skipped' : '') + '.';
           } catch (e) {
             console.error(e);
+            this.importMessage = 'Import failed: ' + e.message;
+          } finally {
+            this.importing = false;
           }
-          location.reload();
         }
       }"
     >
       <header class="container">
         <nav>
           <ul>
-            <li><strong>Tomsy</strong></li>
+            <li>
+              <strong style="display: inline-flex; align-items: center; gap: 0.5rem">
+                <img src="icons/icon.svg" alt="" height="28" width="28" style="border-radius: 6px" />
+                Tomsy
+              </strong>
+            </li>
           </ul>
           <ul>
             <li><a href="index.html">Add</a></li>
@@ -55,7 +85,8 @@
               <details class="dropdown">
                 <summary>Settings</summary>
                 <ul dir="rtl">
-                  <li><a href="#" @click.prevent="$el.closest('details').open = false; showReset = true">Reset</a></li>
+                  <li><a href="#" @click.prevent="$el.closest('details').open = false; openImport()">Csv Import</a></li>
+                  <li><a href="#" @click.prevent="$el.closest('details').open = false; showReset = true">Reset DB</a></li>
                 </ul>
               </details>
             </li>
@@ -82,6 +113,33 @@
               :aria-busy="resetting"
               :disabled="resetting"
               x-text="resetting ? 'Resetting…' : 'Reset'"
+            ></button>
+          </footer>
+        </article>
+      </dialog>
+
+      <!-- CSV import modal (Pico) -->
+      <dialog :open="showImport">
+        <article>
+          <header>
+            <button aria-label="Close" rel="prev" @click="if (!importing) showImport = false"></button>
+            <p><strong>Import CSV</strong></p>
+          </header>
+          <p>Choose a .csv file with columns <strong>Date, Amount, Category, Desc</strong>. Unknown categories are imported as “Непонятно”.</p>
+          <input
+            type="file"
+            accept=".csv,text/csv"
+            :disabled="importing"
+            @change="importFile = $event.target.files[0] || null; importMessage = ''"
+          />
+          <p x-show="importMessage" x-text="importMessage"></p>
+          <footer>
+            <button class="secondary" @click="showImport = false" :disabled="importing">Cancel</button>
+            <button
+              @click="runImport()"
+              :disabled="importing || !importFile"
+              :aria-busy="importing"
+              x-text="importing ? 'Importing…' : 'Import'"
             ></button>
           </footer>
         </article>

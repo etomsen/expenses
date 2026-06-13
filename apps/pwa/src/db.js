@@ -72,14 +72,16 @@ async function createDb() {
     CREATE INDEX IF NOT EXISTS idx_expenses_data ON expenses (data);
   `);
 
-  // Seed default categories on first launch (idempotent).
-  for (const { category, supercategory } of DEFAULT_CATEGORIES) {
-    await db.query(
-      `INSERT INTO category (category, supercategory)
-       VALUES ($1, $2)
-       ON CONFLICT (category) DO NOTHING`,
-      [category, supercategory]
-    );
+  // Seed default categories ONLY on first launch — i.e. when the table is
+  // still empty. If the DB already holds categories, leave it untouched.
+  const { rows } = await db.query(`SELECT COUNT(*)::int AS n FROM category`);
+  if (rows[0].n === 0) {
+    for (const { category, supercategory } of DEFAULT_CATEGORIES) {
+      await db.query(
+        `INSERT INTO category (category, supercategory) VALUES ($1, $2)`,
+        [category, supercategory]
+      );
+    }
   }
 
   return db;

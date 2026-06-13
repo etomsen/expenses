@@ -120,21 +120,28 @@ export async function listExpenses() {
 
 export async function insertExpense({ data, amount, currency, desc, category, supercategory }) {
   const db = await dbPromise;
-  // Insert the expense and bump the category's usage counter together so the
-  // count can never drift from the number of recorded expenses.
-  return db.transaction(async (tx) => {
-    const result = await tx.query(
-      `INSERT INTO expenses (data, amount, currency, description, category, supercategory)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, data, amount, currency, description AS desc, category, supercategory, created_at`,
-      [data, amount, currency, desc, category, supercategory]
-    );
-    await tx.query(
+  // Saving the expense is the critical operation — do it on its own so it
+  // always commits (and persists to IndexedDB).
+  const result = await db.query(
+    `INSERT INTO expenses (data, amount, currency, description, category, supercategory)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id, data, amount, currency, description AS desc, category, supercategory, created_at`,
+    [data, amount, currency, desc, category, supercategory]
+  );
+
+  // Bump the category usage counter as a best-effort, non-critical step. A
+  // failure here (e.g. an old DB missing the column) must never lose the
+  // expense that was already saved above.
+  try {
+    await db.query(
       `UPDATE category SET usage_count = usage_count + 1 WHERE category = $1`,
       [category]
     );
-    return result.rows[0];
-  });
+  } catch (e) {
+    console.warn('Could not update category usage_count:', e);
+  }
+
+  return result.rows[0];
 }
 
 // Completely remove the database — closes the connection and deletes the

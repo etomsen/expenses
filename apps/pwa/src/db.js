@@ -13,7 +13,7 @@ const DEFAULT_CATEGORIES = [
   { category: 'Телефон', supercategory: 'Жизнь' },
   { category: 'Кино и концерты', supercategory: 'Жизнь' },
   { category: 'Танцы', supercategory: 'Жизнь' },
-  { category: 'программы подписки', supercategory: 'Жизнь' },
+  { category: 'Программы подписки', supercategory: 'Жизнь' },
   { category: 'Алкоголь', supercategory: 'Жизнь' },
   { category: 'Подарки', supercategory: 'Жизнь' },
   { category: 'Курсы, Обучение', supercategory: 'Жизнь' },

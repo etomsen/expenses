@@ -120,6 +120,30 @@ export async function listExpenses() {
   return result.rows;
 }
 
+function csvEscape(value) {
+  const s = value == null ? '' : String(value);
+  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+// Export all expenses as a CSV string. The columns round-trip with
+// importCsv() (Date/Amount/Currency/Category/Desc are read back; Subcategory
+// is informational and ignored on import).
+export async function exportCsv() {
+  const db = await dbPromise;
+  const result = await db.query(
+    `SELECT to_char(data, 'YYYY-MM-DD') AS date, amount, currency, category, supercategory, description
+     FROM expenses
+     ORDER BY data DESC, id DESC`
+  );
+  const lines = [['Date', 'Amount', 'Currency', 'Category', 'Subcategory', 'Desc'].join(',')];
+  for (const r of result.rows) {
+    lines.push(
+      [r.date, r.amount, r.currency, r.category, r.supercategory, r.description].map(csvEscape).join(',')
+    );
+  }
+  return lines.join('\n');
+}
+
 export async function insertExpense({ data, amount, currency, desc, category, supercategory }) {
   const db = await dbPromise;
   // Saving the expense is the critical operation — do it on its own so it
@@ -156,6 +180,11 @@ export async function updateExpense(id, { data, amount, currency, desc, category
     [id, data, amount, currency, desc, category, supercategory]
   );
   return result.rows[0];
+}
+
+export async function deleteExpense(id) {
+  const db = await dbPromise;
+  await db.query(`DELETE FROM expenses WHERE id = $1`, [id]);
 }
 
 // Completely remove the database — closes the connection and deletes the

@@ -65,6 +65,21 @@
           } finally {
             this.importing = false;
           }
+        },
+        async runExport() {
+          try {
+            const db = await window.__expenseDBReady;
+            const csv = await db.exportCsv();
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'tomsy-expenses.csv';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+          } catch (e) { console.error(e); }
         }
       }"
     >
@@ -85,8 +100,9 @@
               <details class="dropdown">
                 <summary>Settings</summary>
                 <ul dir="rtl">
-                  <li><a href="#" @click.prevent="$el.closest('details').open = false; openImport()">Csv Import</a></li>
-                  <li><a href="#" @click.prevent="$el.closest('details').open = false; showReset = true">Reset DB</a></li>
+                  <li><a href="#" @click.prevent="$el.closest('details').open = false; openImport()">Import</a></li>
+                  <li><a href="#" @click.prevent="$el.closest('details').open = false; runExport()">Export</a></li>
+                  <li><a href="#" @click.prevent="$el.closest('details').open = false; showReset = true">Reset</a></li>
                 </ul>
               </details>
             </li>
@@ -157,6 +173,7 @@
         db: null,
         showEdit: false,
         saving: false,
+        deleting: false,
         editMessage: '',
         edit: { id: null, date: '', amount: '', currency: 'EUR', category: '', description: '' },
         async init() {
@@ -219,6 +236,21 @@
             this.editMessage = 'Failed to save: ' + e.message;
           } finally {
             this.saving = false;
+          }
+        },
+        async deleteEdit() {
+          if (this.saving || this.deleting) return;
+          this.deleting = true;
+          this.editMessage = '';
+          try {
+            await this.db.deleteExpense(this.edit.id);
+            this.expenses = await this.db.listExpenses();
+            this.showEdit = false;
+          } catch (e) {
+            console.error(e);
+            this.editMessage = 'Failed to delete: ' + e.message;
+          } finally {
+            this.deleting = false;
           }
         }
       }"
@@ -310,11 +342,18 @@
 
           <p x-show="editMessage" x-text="editMessage"></p>
 
-          <footer>
-            <button class="secondary" @click="showEdit = false" :disabled="saving">Cancel</button>
+          <footer style="display: flex; gap: 0.5rem; align-items: center">
+            <button
+              @click="deleteEdit()"
+              :disabled="saving || deleting"
+              :aria-busy="deleting"
+              style="margin-right: auto; --pico-background-color: #c0392b; --pico-border-color: #c0392b"
+              x-text="deleting ? 'Deleting…' : 'Delete'"
+            ></button>
+            <button class="secondary" @click="showEdit = false" :disabled="saving || deleting">Cancel</button>
             <button
               @click="saveEdit()"
-              :disabled="!editValid || saving"
+              :disabled="!editValid || saving || deleting"
               :aria-busy="saving"
               x-text="saving ? 'Saving…' : 'Save'"
             ></button>

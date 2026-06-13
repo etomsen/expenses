@@ -67,6 +67,21 @@
           } finally {
             this.importing = false;
           }
+        },
+        async runExport() {
+          try {
+            const db = await window.__expenseDBReady;
+            const csv = await db.exportCsv();
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'tomsy-expenses.csv';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+          } catch (e) { console.error(e); }
         }
       }"
     >
@@ -87,8 +102,9 @@
               <details class="dropdown">
                 <summary>Settings</summary>
                 <ul dir="rtl">
-                  <li><a href="#" @click.prevent="$el.closest('details').open = false; openImport()">Csv Import</a></li>
-                  <li><a href="#" @click.prevent="$el.closest('details').open = false; showReset = true">Reset DB</a></li>
+                  <li><a href="#" @click.prevent="$el.closest('details').open = false; openImport()">Import</a></li>
+                  <li><a href="#" @click.prevent="$el.closest('details').open = false; runExport()">Export</a></li>
+                  <li><a href="#" @click.prevent="$el.closest('details').open = false; showReset = true">Reset</a></li>
                 </ul>
               </details>
             </li>

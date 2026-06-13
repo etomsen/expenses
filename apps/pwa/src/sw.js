@@ -2,7 +2,7 @@
 // data files) so the app — and its in-browser Postgres database — work with
 // no network at all. The precache list is generated at build time into
 // precache.json, which keeps the hashed PGLite chunk filenames in sync.
-const CACHE = 'expenses-pwa-v17';
+const CACHE = 'expenses-pwa-v19';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

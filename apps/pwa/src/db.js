@@ -45,9 +45,13 @@ const DEFAULT_CATEGORIES = [
   { category: 'Путешешествие', supercategory: 'Путешествия' },
 ];
 
+// PGLite stores an "idb://<name>" database in an IndexedDB named "/pglite/<name>".
+const DB_NAME = 'expenses';
+const IDB_NAME = `/pglite/${DB_NAME}`;
+
 async function createDb() {
   // Persisted in IndexedDB; survives reloads and works offline.
-  const db = await PGlite.create('idb://expenses');
+  const db = await PGlite.create(`idb://${DB_NAME}`);
 
   await db.exec(`
     CREATE TABLE IF NOT EXISTS category (
@@ -130,5 +134,22 @@ export async function insertExpense({ data, amount, currency, desc, category, su
       [category]
     );
     return result.rows[0];
+  });
+}
+
+// Completely remove the database — closes the connection and deletes the
+// whole IndexedDB store (data AND tables). After this the app must reload;
+// on next launch createDb() rebuilds the schema and re-seeds from scratch.
+export async function resetDatabase() {
+  try {
+    const db = await dbPromise;
+    await db.close();
+  } catch (e) {
+    // If the DB never opened, there is nothing to close.
+    console.warn('Could not close DB before reset:', e);
+  }
+  await new Promise((resolve) => {
+    const req = indexedDB.deleteDatabase(IDB_NAME);
+    req.onsuccess = req.onerror = req.onblocked = () => resolve();
   });
 }

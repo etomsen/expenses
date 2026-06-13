@@ -26,17 +26,67 @@
     <script src="assets/alpine.min.js" defer></script>
   </head>
   <body>
-    <header class="container">
-      <nav>
-        <ul>
-          <li><strong>Tomsy</strong></li>
-        </ul>
-        <ul>
-          <li><a href="index.html">Add</a></li>
-          <li><a href="blotter.html" aria-current="page">Blotter</a></li>
-        </ul>
-      </nav>
-    </header>
+    <div
+      x-data="{
+        showReset: false,
+        resetting: false,
+        async reset() {
+          if (this.resetting) return;
+          this.resetting = true;
+          try {
+            const db = await window.__expenseDBReady;
+            await db.resetDatabase();
+          } catch (e) {
+            console.error(e);
+          }
+          location.reload();
+        }
+      }"
+    >
+      <header class="container">
+        <nav>
+          <ul>
+            <li><strong>Tomsy</strong></li>
+          </ul>
+          <ul>
+            <li><a href="index.html">Add</a></li>
+            <li><a href="blotter.html" aria-current="page">Blotter</a></li>
+            <li>
+              <details class="dropdown">
+                <summary>Menu</summary>
+                <ul dir="rtl">
+                  <li><a href="#" @click.prevent="$el.closest('details').open = false; showReset = true">Reset</a></li>
+                </ul>
+              </details>
+            </li>
+          </ul>
+        </nav>
+      </header>
+
+      <!-- Reset confirmation modal (Pico) -->
+      <dialog :open="showReset">
+        <article>
+          <header>
+            <button aria-label="Close" rel="prev" @click="if (!resetting) showReset = false"></button>
+            <p><strong>Reset database?</strong></p>
+          </header>
+          <p>
+            This permanently deletes the entire local database — all expenses,
+            categories and tables — then reloads the app. This cannot be undone.
+          </p>
+          <footer>
+            <button class="secondary" @click="showReset = false" :disabled="resetting">Cancel</button>
+            <button
+              class="contrast"
+              @click="reset()"
+              :aria-busy="resetting"
+              :disabled="resetting"
+              x-text="resetting ? 'Resetting…' : 'Reset'"
+            ></button>
+          </footer>
+        </article>
+      </dialog>
+    </div>
 
     <main
       class="container"

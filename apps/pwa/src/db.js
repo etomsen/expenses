@@ -4,14 +4,45 @@
 // works fully offline. The database is created on first launch.
 import { PGlite } from './assets/pglite/index.js';
 
+// Category -> Supercategory list, taken from the "Category" sheet of the
+// shared expenses spreadsheet. Seeded once on first launch and then preserved
+// across launches (the inserts below are idempotent).
 const DEFAULT_CATEGORIES = [
-  { category: 'Groceries', supercategory: 'Food' },
-  { category: 'Restaurants', supercategory: 'Food' },
-  { category: 'Fuel', supercategory: 'Transport' },
-  { category: 'Public Transport', supercategory: 'Transport' },
-  { category: 'Rent', supercategory: 'Housing' },
-  { category: 'Utilities', supercategory: 'Housing' },
-  { category: 'Entertainment', supercategory: 'Leisure' },
+  { category: 'Медицина', supercategory: 'Жизнь' },
+  { category: 'Для дома', supercategory: 'Жизнь' },
+  { category: 'Телефон', supercategory: 'Жизнь' },
+  { category: 'Кино и концерты', supercategory: 'Жизнь' },
+  { category: 'Танцы', supercategory: 'Жизнь' },
+  { category: 'программы подписки', supercategory: 'Жизнь' },
+  { category: 'Алкоголь', supercategory: 'Жизнь' },
+  { category: 'Подарки', supercategory: 'Жизнь' },
+  { category: 'Курсы, Обучение', supercategory: 'Жизнь' },
+  { category: 'Выход в свет', supercategory: 'Жизнь' },
+  { category: 'Спорт', supercategory: 'Жизнь' },
+  { category: 'Продукты', supercategory: 'Еда' },
+  { category: 'Кофе и рестораны', supercategory: 'Еда' },
+  { category: 'Ворк фуд', supercategory: 'Еда' },
+  { category: 'Ожежда и обувь', supercategory: 'Покупки' },
+  { category: 'В дом', supercategory: 'Покупки' },
+  { category: 'Спортовары', supercategory: 'Покупки' },
+  { category: 'Гаджеты', supercategory: 'Покупки' },
+  { category: 'Машина', supercategory: 'Транспорт' },
+  { category: 'Машина ремонт', supercategory: 'Транспорт' },
+  { category: 'Такси', supercategory: 'Транспорт' },
+  { category: 'Общественный транспорт', supercategory: 'Транспорт' },
+  { category: 'Ипотека', supercategory: 'Дом' },
+  { category: 'Коммунальные платежи', supercategory: 'Дом' },
+  { category: 'Налоги, документы', supercategory: 'Дом' },
+  { category: 'Страховки', supercategory: 'Дом' },
+  { category: 'Мебель', supercategory: 'Дом' },
+  { category: 'Стройка', supercategory: 'Дом' },
+  { category: 'Аренда', supercategory: 'Дом' },
+  { category: 'Штраф', supercategory: 'Потери' },
+  { category: 'Потерял', supercategory: 'Потери' },
+  { category: 'Дети', supercategory: 'Обязанности' },
+  { category: 'Питомцы', supercategory: 'Обязанности' },
+  { category: 'Близкие', supercategory: 'Обязанности' },
+  { category: 'Путешешествие', supercategory: 'Путешествия' },
 ];
 
 async function createDb() {

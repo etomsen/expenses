@@ -53,8 +53,12 @@ async function createDb() {
     CREATE TABLE IF NOT EXISTS category (
       category      TEXT PRIMARY KEY,
       supercategory TEXT NOT NULL,
+      usage_count   INTEGER NOT NULL DEFAULT 0,
       UNIQUE (category, supercategory)
     );
+
+    -- Migrate databases created before usage_count existed.
+    ALTER TABLE category ADD COLUMN IF NOT EXISTS usage_count INTEGER NOT NULL DEFAULT 0;
 
     CREATE TABLE IF NOT EXISTS expenses (
       id            SERIAL PRIMARY KEY,
@@ -94,7 +98,8 @@ export const ready = dbPromise;
 export async function listCategories() {
   const db = await dbPromise;
   const result = await db.query(
-    `SELECT category, supercategory FROM category ORDER BY supercategory, category`
+    // Most-used categories first; alphabetical as a stable tie-breaker.
+    `SELECT category, supercategory FROM category ORDER BY usage_count DESC, category`
   );
   return result.rows;
 }
@@ -111,11 +116,19 @@ export async function listExpenses() {
 
 export async function insertExpense({ data, amount, currency, desc, category, supercategory }) {
   const db = await dbPromise;
-  const result = await db.query(
-    `INSERT INTO expenses (data, amount, currency, description, category, supercategory)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id, data, amount, currency, description AS desc, category, supercategory, created_at`,
-    [data, amount, currency, desc, category, supercategory]
-  );
-  return result.rows[0];
+  // Insert the expense and bump the category's usage counter together so the
+  // count can never drift from the number of recorded expenses.
+  return db.transaction(async (tx) => {
+    const result = await tx.query(
+      `INSERT INTO expenses (data, amount, currency, description, category, supercategory)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, data, amount, currency, description AS desc, category, supercategory, created_at`,
+      [data, amount, currency, desc, category, supercategory]
+    );
+    await tx.query(
+      `UPDATE category SET usage_count = usage_count + 1 WHERE category = $1`,
+      [category]
+    );
+    return result.rows[0];
+  });
 }

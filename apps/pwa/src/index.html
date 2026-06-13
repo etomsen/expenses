@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Expenses</title>
+    <!-- PWA -->
+    <link rel="manifest" href="manifest.webmanifest" />
+    <meta name="theme-color" content="#1a1a1a" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Expenses" />
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+    <link rel="icon" href="icons/icon-192.png" type="image/png" sizes="192x192" />
+    <link rel="apple-touch-icon" href="icons/icon-512.png" />
+    <!-- pico.css and Alpine.js served locally from assets, not a CDN -->
+    <link rel="stylesheet" href="assets/pico.min.css" />
+    <!-- Readiness promise the local DB module resolves once PGLite is loaded. -->
+    <script>
+      window.__expenseDBReady = new Promise((resolve) => {
+        window.__resolveExpenseDB = resolve;
+      });
+    </script>
+    <!-- Local PGLite database (module so its imports resolve correctly). -->
+    <script src="app.js" type="module"></script>
+    <!-- Mask plugin must load before Alpine core -->
+    <script src="assets/alpine-mask.min.js" defer></script>
+    <script src="assets/alpine.min.js" defer></script>
+  </head>
+  <body>
+    <main class="container">
+      <h1>Expenses</h1>
+
+      <form
+        style="max-width: 400px; margin: 0 auto"
+        x-data="{
+          form: {
+            date: new Date().toISOString().slice(0, 10),
+            amount: '',
+            currency: 'EUR',
+            category: '',
+            description: ''
+          },
+          currencies: ['EUR', 'RUB', 'BYN', 'USD'],
+          categories: [],
+          db: null,
+          saving: false,
+          message: '',
+          async init() {
+            try {
+              // Local PGLite database — no network, full offline.
+              this.db = await window.__expenseDBReady;
+              await this.db.ready;
+              this.categories = await this.db.listCategories();
+            } catch (e) {
+              console.error(e);
+              this.message = 'Could not load categories';
+            }
+          },
+          get amountValue() {
+            return parseFloat(String(this.form.amount).replace(/,/g, ''));
+          },
+          get isValid() {
+            return (
+              !!this.form.date &&
+              this.amountValue > 0 &&
+              !!this.form.currency &&
+              !!this.form.category
+            );
+          },
+          async submit() {
+            if (!this.isValid || this.saving || !this.db) return;
+            const selected = this.categories.find((c) => c.category === this.form.category);
+            const payload = {
+              data: new Date(this.form.date).toISOString(),
+              amount: this.amountValue,
+              currency: this.form.currency,
+              desc: this.form.description,
+              category: this.form.category,
+              supercategory: selected ? selected.supercategory : ''
+            };
+            this.saving = true;
+            this.message = '';
+            try {
+              const saved = await this.db.insertExpense(payload);
+              this.message = 'Saved expense #' + saved.id;
+              this.form.amount = '';
+              this.form.description = '';
+              this.form.category = '';
+            } catch (e) {
+              this.message = 'Failed to save: ' + e.message;
+            } finally {
+              this.saving = false;
+            }
+          }
+        }"
+        @submit.prevent="submit"
+      >
+        <label for="date">Date</label>
+        <input id="date" type="date" x-model="form.date" required />
+
+        <div style="display: flex; gap: 1rem; align-items: flex-end">
+          <div style="flex: 1">
+            <label for="amount">Amount</label>
+            <input
+              id="amount"
+              type="text"
+              inputmode="decimal"
+              placeholder="0.00"
+              style="width: 100%"
+              x-model="form.amount"
+              x-mask:dynamic="$money($input)"
+              required
+            />
+          </div>
+          <div>
+            <select id="currency" x-model="form.currency" required>
+              <template x-for="c in currencies" :key="c">
+                <option :value="c" x-text="c"></option>
+              </template>
+            </select>
+          </div>
+        </div>
+
+        <label for="category">Category</label>
+        <select id="category" x-model="form.category" required>
+          <option value="" disabled>Select a category</option>
+          <template x-for="c in categories" :key="c.category">
+            <option :value="c.category" x-text="c.category + ' (' + c.supercategory + ')'"></option>
+          </template>
+        </select>
+
+        <label for="description">Description</label>
+        <input id="description" type="text" x-model="form.description" />
+
+        <button type="submit" :disabled="!isValid || saving" x-text="saving ? 'Saving…' : 'Add expense'"></button>
+
+        <p x-show="message" x-text="message"></p>
+      </form>
+    </main>
+
+    <!-- Register the service worker for offline support. -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('sw.js').catch((err) => {
+            console.error('SW registration failed:', err);
+          });
+        });
+      }
+    </script>
+  </body>
+</html>

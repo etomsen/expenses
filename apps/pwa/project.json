@@ -1,0 +1,29 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "pwa",
+  "projectType": "application",
+  "sourceRoot": "apps/pwa/src",
+  "targets": {
+    "vendor": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node tools/vendor-pwa-assets.mjs"
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "outputs": ["{workspaceRoot}/dist/pwa"],
+      "dependsOn": ["vendor"],
+      "options": {
+        "command": "node tools/copy-app.mjs apps/pwa/src dist/pwa"
+      }
+    },
+    "serve": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["vendor"],
+      "options": {
+        "command": "http-server apps/pwa/src -p 4300 -c-1 -o"
+      }
+    }
+  }
+}

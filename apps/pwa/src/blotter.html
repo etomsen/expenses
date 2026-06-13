@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tomsy — Blotter</title>
+    <!-- PWA -->
+    <link rel="manifest" href="manifest.webmanifest" />
+    <meta name="theme-color" content="#1a1a1a" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Tomsy" />
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+    <link rel="icon" href="icons/icon-192.png" type="image/png" sizes="192x192" />
+    <link rel="apple-touch-icon" href="icons/icon-512.png" />
+    <!-- pico.css and Alpine.js served locally from assets, not a CDN -->
+    <link rel="stylesheet" href="assets/pico.min.css" />
+    <!-- Readiness promise the local DB module resolves once PGLite is loaded. -->
+    <script>
+      window.__expenseDBReady = new Promise((resolve) => {
+        window.__resolveExpenseDB = resolve;
+      });
+    </script>
+    <!-- Local PGLite database (module so its imports resolve correctly). -->
+    <script src="app.js" type="module"></script>
+    <script src="assets/alpine.min.js" defer></script>
+  </head>
+  <body>
+    <header class="container">
+      <nav>
+        <ul>
+          <li><strong>Tomsy</strong></li>
+        </ul>
+        <ul>
+          <li><a href="index.html">Add</a></li>
+          <li><a href="blotter.html" aria-current="page">Blotter</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <main
+      class="container"
+      x-data="{
+        expenses: [],
+        loading: true,
+        message: '',
+        async init() {
+          try {
+            const db = await window.__expenseDBReady;
+            await db.ready;
+            this.expenses = await db.listExpenses();
+          } catch (e) {
+            console.error(e);
+            this.message = 'Could not load expenses';
+          } finally {
+            this.loading = false;
+          }
+        },
+        formatDate(d) {
+          return new Date(d).toISOString().slice(0, 10);
+        }
+      }"
+    >
+      <h2>Blotter</h2>
+
+      <p x-show="loading" aria-busy="true">Loading expenses…</p>
+      <p x-show="message" x-text="message"></p>
+      <p x-show="!loading && !message && expenses.length === 0">No expenses yet.</p>
+
+      <table x-show="expenses.length > 0">
+        <thead>
+          <tr>
+            <th scope="col">Date</th>
+            <th scope="col">Amount</th>
+            <th scope="col">Category</th>
+            <th scope="col">Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="e in expenses" :key="e.id">
+            <tr>
+              <th scope="row" x-text="formatDate(e.data)"></th>
+              <td x-text="e.amount + ' ' + e.currency"></td>
+              <td x-text="e.category"></td>
+              <td x-text="e.desc"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </main>
+  </body>
+</html>

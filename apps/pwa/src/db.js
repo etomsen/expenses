@@ -66,6 +66,16 @@ export async function listCategories() {
   return result.rows;
 }
 
+export async function listExpenses() {
+  const db = await dbPromise;
+  const result = await db.query(
+    `SELECT id, data, amount, currency, description AS desc, category, supercategory
+     FROM expenses
+     ORDER BY data DESC, id DESC`
+  );
+  return result.rows;
+}
+
 export async function insertExpense({ data, amount, currency, desc, category, supercategory }) {
   const db = await dbPromise;
   const result = await db.query(

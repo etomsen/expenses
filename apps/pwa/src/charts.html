@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tomsy</title>
+    <title>Tomsy — Charts</title>
     <!-- PWA -->
     <link rel="manifest" href="manifest.webmanifest" />
     <meta name="theme-color" content="#1a1a1a" />
@@ -23,8 +23,6 @@
     </script>
     <!-- Local PGLite database (module so its imports resolve correctly). -->
     <script src="app.js" type="module"></script>
-    <!-- Mask plugin must load before Alpine core -->
-    <script src="assets/alpine-mask.min.js" defer></script>
     <script src="assets/alpine.min.js" defer></script>
   </head>
   <body>
@@ -96,9 +94,9 @@
             </li>
           </ul>
           <ul>
-            <li><a href="index.html" aria-current="page">Add</a></li>
+            <li><a href="index.html">Add</a></li>
             <li><a href="blotter.html">Blotter</a></li>
-            <li><a href="charts.html">Charts</a></li>
+            <li><a href="charts.html" aria-current="page">Charts</a></li>
             <li>
               <details class="dropdown">
                 <summary>Settings</summary>
@@ -165,131 +163,115 @@
       </dialog>
     </div>
 
-    <main class="container">
-      <form
-        style="max-width: 400px; margin: 0 auto"
-        x-data="{
-          form: {
-            date: new Date().toISOString().slice(0, 10),
-            amount: '',
-            currency: 'EUR',
-            category: '',
-            description: ''
-          },
-          currencies: ['EUR', 'RUB', 'BYN', 'USD'],
-          categories: [],
-          db: null,
-          saving: false,
-          message: '',
-          async init() {
-            try {
-              // Local PGLite database — no network, full offline.
-              this.db = await window.__expenseDBReady;
-              await this.db.ready;
-              this.categories = await this.db.listCategories();
-            } catch (e) {
-              console.error(e);
-              this.message = 'Could not load categories';
-            }
-          },
-          get amountValue() {
-            // Accept either '.' or ',' as the decimal separator (the last one
-            // wins); any other separators are treated as thousands grouping.
-            const s = String(this.form.amount).replace(/\s/g, '');
-            const decPos = Math.max(s.lastIndexOf('.'), s.lastIndexOf(','));
-            if (decPos === -1) return parseFloat(s);
-            const intPart = s.slice(0, decPos).replace(/[.,]/g, '');
-            const fracPart = s.slice(decPos + 1).replace(/[.,]/g, '');
-            return parseFloat(intPart + '.' + fracPart);
-          },
-          get isValid() {
-            return (
-              !!this.form.date &&
-              this.amountValue > 0 &&
-              !!this.form.currency &&
-              !!this.form.category
-            );
-          },
-          async submit() {
-            if (!this.isValid || this.saving || !this.db) return;
-            const selected = this.categories.find((c) => c.category === this.form.category);
-            const payload = {
-              data: new Date(this.form.date).toISOString(),
-              amount: this.amountValue,
-              currency: this.form.currency,
-              desc: this.form.description,
-              category: this.form.category,
-              supercategory: selected ? selected.supercategory : ''
-            };
-            this.saving = true;
-            this.message = '';
-            try {
-              const saved = await this.db.insertExpense(payload);
-              this.message = 'Saved expense #' + saved.id;
-              this.form.amount = '';
-              this.form.description = '';
-              this.form.category = '';
-            } catch (e) {
-              this.message = 'Failed to save: ' + e.message;
-            } finally {
-              this.saving = false;
-            }
+    <main
+      class="container"
+      x-data="{
+        segments: [],
+        total: 0,
+        loading: true,
+        message: '',
+        palette: ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#64748b', '#84cc16'],
+        async init() {
+          try {
+            const db = await window.__expenseDBReady;
+            await db.ready;
+            const rows = await db.supercategoryTotals();
+            this.segments = rows.map((r, i) => ({
+              label: r.supercategory,
+              value: Number(r.total),
+              color: this.palette[i % this.palette.length]
+            }));
+            this.total = this.segments.reduce((s, seg) => s + seg.value, 0);
+            this.$nextTick(() => this.render());
+          } catch (e) {
+            console.error(e);
+            this.message = 'Could not load chart data';
+          } finally {
+            this.loading = false;
           }
-        }"
-        @submit.prevent="submit"
-      >
-        <label for="date">Date</label>
-        <input id="date" type="date" x-model="form.date" required />
-
-        <div style="display: flex; gap: 1rem; align-items: flex-end">
-          <div style="flex: 1">
-            <label for="amount">Amount</label>
-            <input
-              id="amount"
-              type="text"
-              inputmode="decimal"
-              placeholder="0.00"
-              style="width: 100%"
-              x-model="form.amount"
-              @input="form.amount = form.amount.replace(/[^0-9.,]/g, '')"
-              required
-            />
-          </div>
-          <div>
-            <select id="currency" x-model="form.currency" required>
-              <template x-for="c in currencies" :key="c">
-                <option :value="c" x-text="c"></option>
-              </template>
-            </select>
-          </div>
-        </div>
-
-        <label for="category">Category</label>
-        <select id="category" x-model="form.category" required>
-          <option value="" disabled>Select a category</option>
-          <template x-for="c in categories" :key="c.category">
-            <option :value="c.category" x-text="c.category + ' (' + c.supercategory + ')'"></option>
-          </template>
-        </select>
-
-        <label for="description">Description</label>
-        <input id="description" type="text" x-model="form.description" />
-
-        <button type="submit" :disabled="!isValid || saving" x-text="saving ? 'Saving…' : 'Add expense'"></button>
-
-        <p x-show="message" x-text="message"></p>
-      </form>
-    </main>
-
-    <!-- Register the service worker for offline support. -->
-    <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('sw.js').catch((err) => {
-            console.error('SW registration failed:', err);
+        },
+        render() {
+          const canvas = this.$refs.canvas;
+          if (!canvas || this.segments.length === 0) return;
+          const ctx = canvas.getContext('2d');
+          const cx = canvas.width / 2;
+          const cy = canvas.height / 2;
+          const r = Math.min(cx, cy) - 10;
+          const total = this.segments.reduce((s, seg) => s + seg.value, 0);
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.font = 'bold 13px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.lineWidth = 3;
+          let start = -Math.PI / 2;
+          this.segments.forEach((seg) => {
+            const angle = (seg.value / total) * Math.PI * 2;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.arc(cx, cy, r, start, start + angle);
+            ctx.closePath();
+            ctx.fillStyle = seg.color;
+            ctx.fill();
+            // Draw the sum on the slice (skip slices too small to fit a label).
+            if (seg.value / total >= 0.04) {
+              const mid = start + angle / 2;
+              const lx = cx + Math.cos(mid) * r * 0.62;
+              const ly = cy + Math.sin(mid) * r * 0.62;
+              const text = Math.round(seg.value).toString();
+              ctx.strokeStyle = 'rgba(0, 0, 0, 0.45)';
+              ctx.strokeText(text, lx, ly);
+              ctx.fillStyle = '#fff';
+              ctx.fillText(text, lx, ly);
+            }
+            start += angle;
           });
-        });
-      }
-    </script>
+        },
+        percent(value) {
+          return this.total > 0 ? ((value / this.total) * 100).toFixed(1) : '0.0';
+        }
+      }"
+    >
+      <h2>Charts</h2>
+      <p>Expenses by supercategory.</p>
+
+      <p x-show="loading" aria-busy="true">Loading…</p>
+      <p x-show="message" x-text="message"></p>
+      <p x-show="!loading && !message && segments.length === 0">No expenses yet.</p>
+
+      <div x-show="segments.length > 0">
+        <canvas x-ref="canvas" width="300" height="300" style="max-width: 100%"></canvas>
+
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Supercategory</th>
+              <th scope="col">Sum</th>
+              <th scope="col">%</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="seg in segments" :key="seg.label">
+              <tr>
+                <th scope="row">
+                  <span
+                    :style="'display:inline-block;width:12px;height:12px;border-radius:2px;margin-right:8px;vertical-align:middle;background:' + seg.color"
+                  ></span>
+                  <span x-text="seg.label"></span>
+                </th>
+                <td x-text="seg.value.toFixed(2)"></td>
+                <td x-text="percent(seg.value) + '%'"></td>
+              </tr>
+            </template>
+          </tbody>
+          <tfoot>
+            <tr>
+              <th scope="row">Total</th>
+              <td x-text="total.toFixed(2)"></td>
+              <td>100%</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </main>
   </body>
 </html>

@@ -120,6 +120,17 @@ export async function listExpenses() {
   return result.rows;
 }
 
+export async function supercategoryTotals() {
+  const db = await dbPromise;
+  const result = await db.query(
+    `SELECT supercategory, SUM(amount) AS total
+     FROM expenses
+     GROUP BY supercategory
+     ORDER BY total DESC`
+  );
+  return result.rows;
+}
+
 function csvEscape(value) {
   const s = value == null ? '' : String(value);
   return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;

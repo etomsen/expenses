@@ -202,6 +202,15 @@
             supercategory: this.filterSupercategory || undefined
           });
         },
+        get total() {
+          return this.expenses.reduce((s, e) => s + Number(e.amount), 0);
+        },
+        get heading() {
+          const q = String.fromCharCode(34);
+          if (this.filterCategory) return q + this.filterCategory + q;
+          if (this.filterSupercategory) return q + this.filterSupercategory + q;
+          return 'All';
+        },
         formatDate(d) {
           return new Date(d).toISOString().slice(0, 10);
         },
@@ -268,7 +277,7 @@
         }
       }"
     >
-      <h2>Blotter</h2>
+      <h2 x-text="heading + ': ' + total.toFixed(2) + ' EUR'"></h2>
 
       <p x-show="filterCategory || filterSupercategory">
         <span x-show="filterCategory">Filtered by category: <strong x-text="filterCategory"></strong></span>

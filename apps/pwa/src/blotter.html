@@ -172,7 +172,8 @@
         loading: true,
         message: '',
         db: null,
-        filter: '',
+        filterCategory: '',
+        filterSupercategory: '',
         showEdit: false,
         saving: false,
         deleting: false,
@@ -180,11 +181,13 @@
         edit: { id: null, date: '', amount: '', currency: 'EUR', category: '', description: '' },
         async init() {
           try {
-            // Optional ?supercategory=<name> filter.
-            this.filter = new URLSearchParams(location.search).get('supercategory') || '';
+            // Optional ?category=<name> / ?supercategory=<name> filters.
+            const params = new URLSearchParams(location.search);
+            this.filterCategory = params.get('category') || '';
+            this.filterSupercategory = params.get('supercategory') || '';
             this.db = await window.__expenseDBReady;
             await this.db.ready;
-            this.expenses = await this.db.listExpenses(this.filter || undefined);
+            await this.reloadExpenses();
             this.categories = await this.db.listCategories();
           } catch (e) {
             console.error(e);
@@ -192,6 +195,12 @@
           } finally {
             this.loading = false;
           }
+        },
+        async reloadExpenses() {
+          this.expenses = await this.db.listExpenses({
+            category: this.filterCategory || undefined,
+            supercategory: this.filterSupercategory || undefined
+          });
         },
         formatDate(d) {
           return new Date(d).toISOString().slice(0, 10);
@@ -233,7 +242,7 @@
               category: this.edit.category,
               supercategory: selected ? selected.supercategory : ''
             });
-            this.expenses = await this.db.listExpenses(this.filter || undefined);
+            await this.reloadExpenses();
             this.showEdit = false;
           } catch (e) {
             console.error(e);
@@ -248,7 +257,7 @@
           this.editMessage = '';
           try {
             await this.db.deleteExpense(this.edit.id);
-            this.expenses = await this.db.listExpenses(this.filter || undefined);
+            await this.reloadExpenses();
             this.showEdit = false;
           } catch (e) {
             console.error(e);
@@ -261,9 +270,10 @@
     >
       <h2>Blotter</h2>
 
-      <p x-show="filter">
-        Filtered by supercategory: <strong x-text="filter"></strong> ·
-        <a href="blotter.html">show all</a>
+      <p x-show="filterCategory || filterSupercategory">
+        <span x-show="filterCategory">Filtered by category: <strong x-text="filterCategory"></strong></span>
+        <span x-show="filterSupercategory">Filtered by supercategory: <strong x-text="filterSupercategory"></strong></span>
+        · <a href="blotter.html">show all</a>
       </p>
 
       <p x-show="loading" aria-busy="true">Loading expenses…</p>
@@ -276,19 +286,21 @@
             <th scope="col">Date</th>
             <th scope="col">Amount</th>
             <th scope="col">Category</th>
-            <th scope="col">Description</th>
-            <th scope="col"></th>
+            <th scope="col">Supercategory</th>
           </tr>
         </thead>
         <tbody>
           <template x-for="e in expenses" :key="e.id">
             <tr>
               <th scope="row" x-text="formatDate(e.data)"></th>
-              <td x-text="e.amount + ' ' + e.currency"></td>
-              <td x-text="e.category"></td>
-              <td x-text="e.desc"></td>
-              <td style="text-align: right">
-                <a href="#" aria-label="Edit" @click.prevent="openEdit(e)">...</a>
+              <td>
+                <a href="#" aria-label="Edit" @click.prevent="openEdit(e)" x-text="e.amount + ' ' + e.currency"></a>
+              </td>
+              <td>
+                <a :href="'blotter.html?category=' + encodeURIComponent(e.category)" x-text="e.category"></a>
+              </td>
+              <td>
+                <a :href="'blotter.html?supercategory=' + encodeURIComponent(e.supercategory)" x-text="e.supercategory"></a>
               </td>
             </tr>
           </template>

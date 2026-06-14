@@ -172,6 +172,7 @@
         loading: true,
         message: '',
         db: null,
+        filter: '',
         showEdit: false,
         saving: false,
         deleting: false,
@@ -179,9 +180,11 @@
         edit: { id: null, date: '', amount: '', currency: 'EUR', category: '', description: '' },
         async init() {
           try {
+            // Optional ?supercategory=<name> filter.
+            this.filter = new URLSearchParams(location.search).get('supercategory') || '';
             this.db = await window.__expenseDBReady;
             await this.db.ready;
-            this.expenses = await this.db.listExpenses();
+            this.expenses = await this.db.listExpenses(this.filter || undefined);
             this.categories = await this.db.listCategories();
           } catch (e) {
             console.error(e);
@@ -230,7 +233,7 @@
               category: this.edit.category,
               supercategory: selected ? selected.supercategory : ''
             });
-            this.expenses = await this.db.listExpenses();
+            this.expenses = await this.db.listExpenses(this.filter || undefined);
             this.showEdit = false;
           } catch (e) {
             console.error(e);
@@ -245,7 +248,7 @@
           this.editMessage = '';
           try {
             await this.db.deleteExpense(this.edit.id);
-            this.expenses = await this.db.listExpenses();
+            this.expenses = await this.db.listExpenses(this.filter || undefined);
             this.showEdit = false;
           } catch (e) {
             console.error(e);
@@ -257,6 +260,11 @@
       }"
     >
       <h2>Blotter</h2>
+
+      <p x-show="filter">
+        Filtered by supercategory: <strong x-text="filter"></strong> ·
+        <a href="blotter.html">show all</a>
+      </p>
 
       <p x-show="loading" aria-busy="true">Loading expenses…</p>
       <p x-show="message" x-text="message"></p>

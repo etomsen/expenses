@@ -80,6 +80,7 @@ async function createDb() {
     );
 
     CREATE INDEX IF NOT EXISTS idx_expenses_data ON expenses (data);
+    CREATE INDEX IF NOT EXISTS idx_expenses_supercategory ON expenses (supercategory);
   `);
 
   // Seed default categories ONLY on first launch — i.e. when the table is
@@ -110,8 +111,19 @@ export async function listCategories() {
   return result.rows;
 }
 
-export async function listExpenses() {
+export async function listExpenses(supercategory) {
   const db = await dbPromise;
+  // Optionally filter by supercategory (uses idx_expenses_supercategory).
+  if (supercategory) {
+    const result = await db.query(
+      `SELECT id, data, amount, currency, description AS desc, category, supercategory
+       FROM expenses
+       WHERE supercategory = $1
+       ORDER BY data DESC, id DESC`,
+      [supercategory]
+    );
+    return result.rows;
+  }
   const result = await db.query(
     `SELECT id, data, amount, currency, description AS desc, category, supercategory
      FROM expenses

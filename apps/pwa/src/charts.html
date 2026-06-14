@@ -256,7 +256,7 @@
                   <span
                     :style="'display:inline-block;width:12px;height:12px;border-radius:2px;margin-right:8px;vertical-align:middle;background:' + seg.color"
                   ></span>
-                  <span x-text="seg.label"></span>
+                  <a :href="'blotter.html?supercategory=' + encodeURIComponent(seg.label)" x-text="seg.label"></a>
                 </th>
                 <td x-text="seg.value.toFixed(2)"></td>
                 <td x-text="percent(seg.value) + '%'"></td>

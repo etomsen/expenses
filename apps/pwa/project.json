@@ -15,14 +15,18 @@
       "outputs": ["{workspaceRoot}/dist/pwa"],
       "dependsOn": ["vendor"],
       "options": {
-        "command": "node tools/copy-app.mjs apps/pwa/src dist/pwa"
+        "parallel": false,
+        "commands": [
+          "node tools/copy-app.mjs apps/pwa/src dist/pwa",
+          "nx generate @tomsy/templater:build-templates --htmlDir=dist/pwa --templatesDir=apps/pwa/templates --no-interactive"
+        ]
       }
     },
     "serve": {
       "executor": "nx:run-commands",
-      "dependsOn": ["vendor"],
+      "dependsOn": ["build"],
       "options": {
-        "command": "http-server apps/pwa/src -p 4300 -c-1 -o"
+        "command": "http-server dist/pwa -p 4300 -c-1 -o"
       }
     }
   }

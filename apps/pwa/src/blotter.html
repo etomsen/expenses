@@ -15,6 +15,29 @@
     <link rel="apple-touch-icon" href="icons/icon-512.png" />
     <!-- pico.css and Alpine.js served locally from assets, not a CDN -->
     <link rel="stylesheet" href="assets/pico.min.css" />
+    <!-- Phone layout: tighten the table so it fits a narrow screen (e.g. iPhone). -->
+    <style>
+      @media (max-width: 540px) {
+        main.container {
+          padding-left: 0.5rem;
+          padding-right: 0.5rem;
+        }
+        main h2 {
+          font-size: 1.4rem;
+          margin-bottom: 0.5rem;
+        }
+        main table th,
+        main table td {
+          padding: 0.3rem 0.35rem;
+          font-size: 0.8rem;
+        }
+        /* Date and amount stay on one line; long category names may wrap. */
+        main table th[scope='row'],
+        main table td:nth-child(2) {
+          white-space: nowrap;
+        }
+      }
+    </style>
     <!-- Shared readiness-promise script (inlined at build by the templater). -->
     <template x-src="db-ready.js"></template>
     <!-- Local PGLite database (module so its imports resolve correctly). -->

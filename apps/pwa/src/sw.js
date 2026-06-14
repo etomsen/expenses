@@ -2,7 +2,7 @@
 // data files) so the app — and its in-browser Postgres database — work with
 // no network at all. The precache list is generated at build time into
 // precache.json, which keeps the hashed PGLite chunk filenames in sync.
-const CACHE = 'expenses-pwa-v25';
+const CACHE = 'expenses-pwa-v26';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -12,9 +12,17 @@ self.addEventListener('install', (event) => {
       const urls = await res.json();
       // Always include the navigation entry point.
       await cache.addAll(['./', ...urls]);
-      await self.skipWaiting();
+      // NOTE: we intentionally do NOT skipWaiting here — the new worker waits
+      // until the page confirms the update (see the message handler below).
     })()
   );
+});
+
+// Activate immediately only when the page asks us to (the update prompt).
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener('activate', (event) => {

@@ -1,0 +1,54 @@
+<div
+  x-data="{
+    showUpdate: false,
+    waitingWorker: null,
+    updating: false,
+    init() {
+      if (!('serviceWorker' in navigator)) return;
+
+      // Reload only after the user confirmed the update and the new worker
+      // took control (not on the first-install clients.claim()).
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (this.updating) location.reload();
+      });
+
+      navigator.serviceWorker.register('sw.js').then((reg) => {
+        const promptFor = (worker) => {
+          // Only prompt for updates (an existing controller), not first install.
+          if (worker && navigator.serviceWorker.controller) {
+            this.waitingWorker = worker;
+            this.showUpdate = true;
+          }
+        };
+        // A new worker already installed and waiting (e.g. declined last time).
+        if (reg.waiting) promptFor(reg.waiting);
+        // A new worker starts installing while the page is open.
+        reg.addEventListener('updatefound', () => {
+          const nw = reg.installing;
+          if (!nw) return;
+          nw.addEventListener('statechange', () => {
+            if (nw.state === 'installed') promptFor(nw);
+          });
+        });
+      }).catch((e) => console.error('SW registration failed:', e));
+    },
+    update() {
+      this.updating = true;
+      if (this.waitingWorker) this.waitingWorker.postMessage({ type: 'SKIP_WAITING' });
+      this.showUpdate = false;
+    }
+  }"
+>
+  <dialog :open="showUpdate">
+    <article>
+      <header>
+        <p><strong>Update available</strong></p>
+      </header>
+      <p>Update is available. Do you want to update?</p>
+      <footer>
+        <button class="secondary" @click="showUpdate = false">Later</button>
+        <button @click="update()">Update</button>
+      </footer>
+    </article>
+  </dialog>
+</div>

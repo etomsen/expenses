@@ -142,16 +142,5 @@
         <p x-show="message" x-text="message"></p>
       </form>
     </main>
-
-    <!-- Register the service worker for offline support. -->
-    <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('sw.js').catch((err) => {
-            console.error('SW registration failed:', err);
-          });
-        });
-      }
-    </script>
   </body>
 </html>

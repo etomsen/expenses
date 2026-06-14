@@ -75,7 +75,7 @@
         <li><a href="charts.html" :aria-current="isCurrent('charts.html')">Charts</a></li>
         <li>
           <details class="dropdown">
-            <summary>Settings</summary>
+            <summary>DB</summary>
             <ul dir="rtl">
               <li><a href="#" @click.prevent="$el.closest('details').open = false; openImport()">Import</a></li>
               <li><a href="#" @click.prevent="$el.closest('details').open = false; runExport()">Export</a></li>
@@ -138,3 +138,6 @@
     </article>
   </dialog>
 </div>
+
+<!-- Service-worker update-available prompt (shared, on every page) -->
+<template x-src="update-prompt.html"></template>

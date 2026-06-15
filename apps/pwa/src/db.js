@@ -82,6 +82,21 @@ async function createDb() {
     CREATE INDEX IF NOT EXISTS idx_expenses_data ON expenses (data);
     CREATE INDEX IF NOT EXISTS idx_expenses_supercategory ON expenses (supercategory);
     CREATE INDEX IF NOT EXISTS idx_expenses_category ON expenses (category);
+
+    CREATE TABLE IF NOT EXISTS budget (
+      id            SERIAL PRIMARY KEY,
+      name          TEXT           NOT NULL,
+      category      TEXT,
+      supercategory TEXT           NOT NULL,
+      budget        NUMERIC(12, 2) NOT NULL,
+      date_from     DATE           NOT NULL,
+      date_till     DATE           NOT NULL,
+      -- (category, supercategory) references the category table. When category
+      -- is NULL the FK is not enforced (MATCH SIMPLE), so a budget can target a
+      -- whole supercategory.
+      FOREIGN KEY (category, supercategory)
+        REFERENCES category (category, supercategory)
+    );
   `);
 
   // Seed default categories ONLY on first launch — i.e. when the table is
@@ -145,6 +160,53 @@ export async function supercategoryTotals() {
      ORDER BY total DESC`
   );
   return result.rows;
+}
+
+// List budgets with their on-the-fly `spent` (SUM of matching expenses within
+// the budget's date range, supercategory, and category if the budget sets one).
+export async function listBudgets() {
+  const db = await dbPromise;
+  const result = await db.query(
+    `SELECT b.id, b.name, b.category, b.supercategory, b.budget,
+            to_char(b.date_from, 'YYYY-MM-DD') AS date_from,
+            to_char(b.date_till, 'YYYY-MM-DD') AS date_till,
+            COALESCE((
+              SELECT SUM(e.amount) FROM expenses e
+              WHERE e.data >= b.date_from
+                AND e.data <= b.date_till
+                AND e.supercategory = b.supercategory
+                AND (b.category IS NULL OR e.category = b.category)
+            ), 0) AS spent
+     FROM budget b
+     ORDER BY b.date_till, b.id`
+  );
+  return result.rows;
+}
+
+export async function insertBudget({ name, category, supercategory, budget, dateFrom, dateTill }) {
+  const db = await dbPromise;
+  const result = await db.query(
+    `INSERT INTO budget (name, category, supercategory, budget, date_from, date_till)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id`,
+    [name, category || null, supercategory, budget, dateFrom, dateTill]
+  );
+  return result.rows[0];
+}
+
+export async function updateBudget(id, { name, category, supercategory, budget, dateFrom, dateTill }) {
+  const db = await dbPromise;
+  await db.query(
+    `UPDATE budget
+     SET name = $2, category = $3, supercategory = $4, budget = $5, date_from = $6, date_till = $7
+     WHERE id = $1`,
+    [id, name, category || null, supercategory, budget, dateFrom, dateTill]
+  );
+}
+
+export async function deleteBudget(id) {
+  const db = await dbPromise;
+  await db.query(`DELETE FROM budget WHERE id = $1`, [id]);
 }
 
 function csvEscape(value) {

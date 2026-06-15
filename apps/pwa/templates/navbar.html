@@ -1,3 +1,30 @@
+<style>
+  /* Navbar shows text labels by default; icon-only on small (phone) screens.
+     Icons are SVG masks tinted with currentColor so they match the link state. */
+  nav .nav-icon { display: none; }
+  @media (max-width: 540px) {
+    nav .nav-label { display: none; }
+    nav .nav-icon {
+      display: inline-block;
+      width: 24px;
+      height: 24px;
+      vertical-align: middle;
+      background-color: currentColor;
+      -webkit-mask-repeat: no-repeat;
+      mask-repeat: no-repeat;
+      -webkit-mask-position: center;
+      mask-position: center;
+      -webkit-mask-size: contain;
+      mask-size: contain;
+    }
+    nav .ni-add { -webkit-mask-image: url('assets/nav/add.svg'); mask-image: url('assets/nav/add.svg'); }
+    nav .ni-blotter { -webkit-mask-image: url('assets/nav/blotter.svg'); mask-image: url('assets/nav/blotter.svg'); }
+    nav .ni-charts { -webkit-mask-image: url('assets/nav/charts.svg'); mask-image: url('assets/nav/charts.svg'); }
+    nav .ni-budgets { -webkit-mask-image: url('assets/nav/budgets.svg'); mask-image: url('assets/nav/budgets.svg'); }
+    nav .ni-db { -webkit-mask-image: url('assets/nav/db.svg'); mask-image: url('assets/nav/db.svg'); }
+  }
+</style>
+
 <div
   x-data="{
     showReset: false,
@@ -70,13 +97,13 @@
         </li>
       </ul>
       <ul>
-        <li><a href="index.html" :aria-current="isCurrent('index.html')">Add</a></li>
-        <li><a href="blotter.html" :aria-current="isCurrent('blotter.html')">Blotter</a></li>
-        <li><a href="charts.html" :aria-current="isCurrent('charts.html')">Charts</a></li>
-        <li><a href="budget.html" :aria-current="isCurrent('budget.html')">Budgets</a></li>
+        <li><a href="index.html" :aria-current="isCurrent('index.html')"><span class="nav-icon ni-add" aria-hidden="true"></span><span class="nav-label">Add</span></a></li>
+        <li><a href="blotter.html" :aria-current="isCurrent('blotter.html')"><span class="nav-icon ni-blotter" aria-hidden="true"></span><span class="nav-label">Blotter</span></a></li>
+        <li><a href="charts.html" :aria-current="isCurrent('charts.html')"><span class="nav-icon ni-charts" aria-hidden="true"></span><span class="nav-label">Charts</span></a></li>
+        <li><a href="budget.html" :aria-current="isCurrent('budget.html')"><span class="nav-icon ni-budgets" aria-hidden="true"></span><span class="nav-label">Budgets</span></a></li>
         <li>
           <details class="dropdown">
-            <summary>DB</summary>
+            <summary><span class="nav-icon ni-db" aria-hidden="true"></span><span class="nav-label">DB</span></summary>
             <ul dir="rtl">
               <li><a href="#" @click.prevent="$el.closest('details').open = false; openImport()">Import</a></li>
               <li><a href="#" @click.prevent="$el.closest('details').open = false; runExport()">Export</a></li>

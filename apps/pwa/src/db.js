@@ -216,6 +216,45 @@ export async function deleteBudget(id) {
   await db.query(`DELETE FROM budget WHERE id = $1`, [id]);
 }
 
+// A single budget with its on-the-fly `spent`. Returns null if not found.
+export async function getBudget(id) {
+  const db = await dbPromise;
+  const result = await db.query(
+    `SELECT b.id, b.name, b.category, b.supercategory, b.budget,
+            to_char(b.date_from, 'YYYY-MM-DD') AS date_from,
+            to_char(b.date_till, 'YYYY-MM-DD') AS date_till,
+            COALESCE((
+              SELECT SUM(e.amount) FROM expenses e
+              WHERE e.data >= b.date_from
+                AND e.data <= b.date_till
+                AND e.supercategory = b.supercategory
+                AND (b.category IS NULL OR e.category = b.category)
+            ), 0) AS spent
+     FROM budget b
+     WHERE b.id = $1`,
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
+// The expenses that count toward a budget (its date range, supercategory, and
+// category if set).
+export async function budgetExpenses(id) {
+  const db = await dbPromise;
+  const result = await db.query(
+    `SELECT e.id, e.data, e.amount, e.currency, e.description AS desc, e.category, e.supercategory
+     FROM expenses e
+     JOIN budget b ON b.id = $1
+     WHERE e.data >= b.date_from
+       AND e.data <= b.date_till
+       AND e.supercategory = b.supercategory
+       AND (b.category IS NULL OR e.category = b.category)
+     ORDER BY e.data DESC, e.id DESC`,
+    [id]
+  );
+  return result.rows;
+}
+
 function csvEscape(value) {
   const s = value == null ? '' : String(value);
   return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;

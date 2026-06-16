@@ -206,8 +206,10 @@
           <template x-for="b in budgets" :key="b.id">
             <tr @click="openEdit(b)" style="cursor: pointer">
               <th scope="row">
-                <span x-text="fmtTill(b.date_till)"></span>
-                <small x-text="'(' + daysLeftLabel(b.date_till) + ')'"></small>
+                <a :href="'budget-transactions.html?budgetId=' + b.id" @click.stop>
+                  <span x-text="fmtTill(b.date_till)"></span>
+                  <small x-text="'(' + daysLeftLabel(b.date_till) + ')'"></small>
+                </a>
               </th>
               <td>
                 <div style="display: flex; flex-direction: column; gap: 3px">

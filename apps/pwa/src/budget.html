@@ -33,6 +33,7 @@
         loading: true,
         message: '',
         db: null,
+        archived: false,
         showAdd: false,
         editingId: null,
         saving: false,
@@ -41,6 +42,7 @@
         form: { name: '', supercategory: '', category: '', budget: '', dateFrom: '', dateTill: '' },
         async init() {
           try {
+            this.archived = new URLSearchParams(location.search).get('archived') === 'true';
             this.db = await window.__expenseDBReady;
             await this.db.ready;
             this.categories = await this.db.listCategories();
@@ -53,7 +55,7 @@
           }
         },
         async reload() {
-          this.budgets = await this.db.listBudgets();
+          this.budgets = await this.db.listBudgets({ archived: this.archived });
         },
         get supercategories() {
           return [...new Set(this.categories.map((c) => c.supercategory))].sort();
@@ -182,9 +184,15 @@
         <button @click="openAdd()" style="width: auto">Add</button>
       </div>
 
+      <p>
+        <a href="budget.html" :aria-current="!archived ? 'page' : null">Active</a>
+        ·
+        <a href="budget.html?archived=true" :aria-current="archived ? 'page' : null">Archived</a>
+      </p>
+
       <p x-show="loading" aria-busy="true">Loading…</p>
       <p x-show="message" x-text="message"></p>
-      <p x-show="!loading && !message && budgets.length === 0">No budgets yet.</p>
+      <p x-show="!loading && !message && budgets.length === 0" x-text="archived ? 'No archived budgets.' : 'No active budgets.'"></p>
 
       <table x-show="budgets.length > 0">
         <thead>

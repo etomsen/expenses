@@ -97,6 +97,8 @@ async function createDb() {
       FOREIGN KEY (category, supercategory)
         REFERENCES category (category, supercategory)
     );
+
+    CREATE INDEX IF NOT EXISTS idx_budget_date_till ON budget (date_till);
   `);
 
   // Seed default categories ONLY on first launch — i.e. when the table is
@@ -164,8 +166,12 @@ export async function supercategoryTotals() {
 
 // List budgets with their on-the-fly `spent` (SUM of matching expenses within
 // the budget's date range, supercategory, and category if the budget sets one).
-export async function listBudgets() {
+// `archived: false` (default) returns budgets that haven't ended yet;
+// `archived: true` returns only ended ones. The date_till filter comes first so
+// the planner can use idx_budget_date_till.
+export async function listBudgets({ archived = false } = {}) {
   const db = await dbPromise;
+  const dateFilter = archived ? 'b.date_till < CURRENT_DATE' : 'b.date_till >= CURRENT_DATE';
   const result = await db.query(
     `SELECT b.id, b.name, b.category, b.supercategory, b.budget,
             to_char(b.date_from, 'YYYY-MM-DD') AS date_from,
@@ -178,6 +184,7 @@ export async function listBudgets() {
                 AND (b.category IS NULL OR e.category = b.category)
             ), 0) AS spent
      FROM budget b
+     WHERE ${dateFilter}
      ORDER BY b.date_till, b.id`
   );
   return result.rows;

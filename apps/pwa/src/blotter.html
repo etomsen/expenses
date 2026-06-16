@@ -59,6 +59,8 @@
         db: null,
         filterCategory: '',
         filterSupercategory: '',
+        period: 'week',
+        periods: [{ key: 'week', label: 'Week' }, { key: '2weeks', label: '2 weeks' }, { key: 'month', label: 'Month' }, { key: 'all', label: 'All' }],
         showEdit: false,
         saving: false,
         deleting: false,
@@ -66,10 +68,11 @@
         edit: { id: null, date: '', amount: '', currency: 'EUR', category: '', description: '' },
         async init() {
           try {
-            // Optional ?category=<name> / ?supercategory=<name> filters.
+            // Optional ?category / ?supercategory / ?period filters.
             const params = new URLSearchParams(location.search);
             this.filterCategory = params.get('category') || '';
             this.filterSupercategory = params.get('supercategory') || '';
+            this.period = params.get('period') || 'week';
             this.db = await window.__expenseDBReady;
             await this.db.ready;
             await this.reloadExpenses();
@@ -84,8 +87,18 @@
         async reloadExpenses() {
           this.expenses = await this.db.listExpenses({
             category: this.filterCategory || undefined,
-            supercategory: this.filterSupercategory || undefined
+            supercategory: this.filterSupercategory || undefined,
+            period: this.period
           });
+        },
+        periodHref(p) {
+          // Keep any active category/supercategory filter; 'week' is the default
+          // so it needs no param.
+          const params = new URLSearchParams(location.search);
+          if (p === 'week') params.delete('period');
+          else params.set('period', p);
+          const qs = params.toString();
+          return 'blotter.html' + (qs ? '?' + qs : '');
         },
         get total() {
           return this.expenses.reduce((s, e) => s + Number(e.amount), 0);
@@ -163,6 +176,14 @@
       }"
     >
       <h2 x-text="heading + ': ' + total.toFixed(2) + ' EUR'"></h2>
+
+      <p>
+        <template x-for="(p, i) in periods" :key="p.key">
+          <span>
+            <a :href="periodHref(p.key)" :aria-current="period === p.key ? 'page' : null" x-text="p.label"></a><span x-show="i < periods.length - 1"> · </span>
+          </span>
+        </template>
+      </p>
 
       <p x-show="filterCategory || filterSupercategory">
         <span x-show="filterCategory">Filtered by category: <strong x-text="filterCategory"></strong></span>

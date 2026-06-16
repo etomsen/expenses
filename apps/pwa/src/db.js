@@ -129,7 +129,18 @@ export async function listCategories() {
   return result.rows;
 }
 
-export async function listExpenses({ category, supercategory } = {}) {
+// Calendar date ranges for the `period` filter. Weeks start on Monday
+// (date_trunc('week') is ISO/Monday-based); month is the calendar month.
+const PERIOD_RANGES = {
+  week: `data >= date_trunc('week', CURRENT_DATE)::date
+         AND data < (date_trunc('week', CURRENT_DATE) + INTERVAL '7 days')::date`,
+  '2weeks': `data >= (date_trunc('week', CURRENT_DATE) - INTERVAL '7 days')::date
+             AND data < (date_trunc('week', CURRENT_DATE) + INTERVAL '7 days')::date`,
+  month: `data >= date_trunc('month', CURRENT_DATE)::date
+          AND data < (date_trunc('month', CURRENT_DATE) + INTERVAL '1 month')::date`,
+};
+
+export async function listExpenses({ category, supercategory, period } = {}) {
   const db = await dbPromise;
   // Optionally filter by category and/or supercategory (uses the indexes).
   const where = [];
@@ -141,6 +152,10 @@ export async function listExpenses({ category, supercategory } = {}) {
   if (supercategory) {
     params.push(supercategory);
     where.push(`supercategory = $${params.length}`);
+  }
+  // Optional calendar period (week / 2weeks / month). 'all' (or unknown) = no date filter.
+  if (PERIOD_RANGES[period]) {
+    where.push(PERIOD_RANGES[period]);
   }
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const result = await db.query(

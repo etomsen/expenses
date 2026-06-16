@@ -168,11 +168,17 @@ export async function listExpenses({ category, supercategory, period } = {}) {
   return result.rows;
 }
 
-export async function supercategoryTotals() {
+// Totals per supercategory for a calendar month: 'this' (default) or 'prev'.
+export async function supercategoryTotals({ month = 'this' } = {}) {
   const db = await dbPromise;
+  const range = month === 'prev'
+    ? `data >= (date_trunc('month', CURRENT_DATE) - INTERVAL '1 month')::date
+       AND data < date_trunc('month', CURRENT_DATE)::date`
+    : PERIOD_RANGES.month;
   const result = await db.query(
     `SELECT supercategory, SUM(amount) AS total
      FROM expenses
+     WHERE ${range}
      GROUP BY supercategory
      ORDER BY total DESC`
   );

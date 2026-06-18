@@ -33,6 +33,11 @@
     importing: false,
     importFile: null,
     importMessage: '',
+    showBudgetImport: false,
+    budgetImporting: false,
+    budgetImportFile: null,
+    budgetImportMessage: '',
+    budgetSkipped: [],
     isCurrent(file) {
       const path = location.pathname.split('/').pop() || 'index.html';
       return path === file ? 'page' : null;
@@ -42,7 +47,7 @@
       this.resetting = true;
       try {
         const db = await window.__expenseDBReady;
-        await db.resetDatabase();
+        await db.database.reset();
       } catch (e) { console.error(e); }
       location.reload();
     },
@@ -58,7 +63,7 @@
       try {
         const db = await window.__expenseDBReady;
         const text = await this.importFile.text();
-        const r = await db.importCsv(text);
+        const r = await db.expenses.importCsv(text);
         this.importMessage = 'Imported ' + r.imported + ' of ' + r.total + ' rows'
           + (r.unmatched ? ', ' + r.unmatched + ' → Непонятно' : '')
           + (r.skipped ? ', ' + r.skipped + ' skipped' : '') + '.';
@@ -69,20 +74,53 @@
         this.importing = false;
       }
     },
+    download(name, text) {
+      const blob = new Blob([text], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    },
     async runExport() {
       try {
         const db = await window.__expenseDBReady;
-        const csv = await db.exportCsv();
-        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'tomsy-expenses.csv';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
+        this.download('tomsy-expenses.csv', await db.expenses.exportCsv());
       } catch (e) { console.error(e); }
+    },
+    async runBudgetExport() {
+      try {
+        const db = await window.__expenseDBReady;
+        this.download('tomsy-budgets.csv', await db.budgets.exportCsv());
+      } catch (e) { console.error(e); }
+    },
+    openBudgetImport() {
+      this.budgetImportFile = null;
+      this.budgetImportMessage = '';
+      this.budgetSkipped = [];
+      this.showBudgetImport = true;
+    },
+    async runBudgetImport() {
+      if (this.budgetImporting || !this.budgetImportFile) return;
+      this.budgetImporting = true;
+      this.budgetImportMessage = '';
+      this.budgetSkipped = [];
+      try {
+        const db = await window.__expenseDBReady;
+        const text = await this.budgetImportFile.text();
+        const r = await db.budgets.importCsv(text);
+        this.budgetSkipped = r.skippedRows || [];
+        this.budgetImportMessage = 'Imported ' + r.imported + ' of ' + r.total + ' budgets'
+          + (r.skipped ? ', ' + r.skipped + ' skipped' : '') + '.';
+      } catch (e) {
+        console.error(e);
+        this.budgetImportMessage = 'Import failed: ' + e.message;
+      } finally {
+        this.budgetImporting = false;
+      }
     }
   }"
 >
@@ -107,6 +145,8 @@
             <ul dir="rtl">
               <li><a href="#" @click.prevent="$el.closest('details').open = false; openImport()">Import</a></li>
               <li><a href="#" @click.prevent="$el.closest('details').open = false; runExport()">Export</a></li>
+              <li><a href="#" @click.prevent="$el.closest('details').open = false; openBudgetImport()">Budgets Import</a></li>
+              <li><a href="#" @click.prevent="$el.closest('details').open = false; runBudgetExport()">Budgets Export</a></li>
               <li><a href="#" @click.prevent="$el.closest('details').open = false; showReset = true">Reset</a></li>
             </ul>
           </details>
@@ -161,6 +201,38 @@
           :disabled="importing || !importFile"
           :aria-busy="importing"
           x-text="importing ? 'Importing…' : 'Import'"
+        ></button>
+      </footer>
+    </article>
+  </dialog>
+
+  <!-- Budgets CSV import modal (Pico) -->
+  <dialog :open="showBudgetImport">
+    <article>
+      <header>
+        <button aria-label="Close" rel="prev" @click="if (!budgetImporting) showBudgetImport = false"></button>
+        <p><strong>Import budgets</strong></p>
+      </header>
+      <p>Choose a .csv file with columns <strong>Name, Category, Supercategory, Budget, From, Till</strong>. Rows whose category/supercategory isn't in the database are skipped.</p>
+      <input
+        type="file"
+        accept=".csv,text/csv"
+        :disabled="budgetImporting"
+        @change="budgetImportFile = $event.target.files[0] || null; budgetImportMessage = ''; budgetSkipped = []"
+      />
+      <p x-show="budgetImportMessage" x-text="budgetImportMessage"></p>
+      <ul x-show="budgetSkipped.length > 0" style="font-size: 0.85rem; color: var(--pico-muted-color)">
+        <template x-for="s in budgetSkipped" :key="s.line">
+          <li><span x-text="'Line ' + s.line + (s.name ? ' (' + s.name + ')' : '') + ': ' + s.reason"></span></li>
+        </template>
+      </ul>
+      <footer>
+        <button class="secondary" @click="showBudgetImport = false" :disabled="budgetImporting">Close</button>
+        <button
+          @click="runBudgetImport()"
+          :disabled="budgetImporting || !budgetImportFile"
+          :aria-busy="budgetImporting"
+          x-text="budgetImporting ? 'Importing…' : 'Import'"
         ></button>
       </footer>
     </article>

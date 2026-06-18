@@ -56,9 +56,9 @@
             const db = await window.__expenseDBReady;
             await db.ready;
             if (!id) { this.error = 'No budget specified.'; return; }
-            this.budget = await db.getBudget(id);
+            this.budget = await db.budgets.get(id);
             if (!this.budget) { this.error = 'Budget #' + id + ' was not found.'; return; }
-            this.expenses = await db.budgetExpenses(id);
+            this.expenses = await db.budgets.expenses(id);
           } catch (e) {
             console.error(e);
             this.error = 'Could not load this budget.';

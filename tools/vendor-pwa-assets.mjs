@@ -47,7 +47,7 @@ for (const f of runtimeFiles) {
 // Generate the service worker precache list by scanning everything under src
 // (so hashed PGLite chunk names stay in sync). The SW itself and the manifest
 // it generates are excluded.
-const EXCLUDE = new Set(['sw.js', 'precache.json']);
+const EXCLUDE = new Set(['sw.js', 'app-sw.js', 'precache.json']);
 
 async function walk(dir, base = '') {
   const entries = await readdir(dir, { withFileTypes: true });

@@ -1,12 +1,9 @@
-// Browser-side database powered by PGLite (Postgres compiled to WASM).
-// Mirrors the schema and queries from apps/server/src/db.mjs, but runs
-// entirely in the browser and persists to IndexedDB ("idb://") so the app
-// works fully offline. The database is created on first launch.
-import { PGlite } from './assets/pglite/index.js';
+// PGLite store — runs INSIDE the service worker. The page never touches this
+// directly; it talks to the SW over /api/* (see ../interceptors and ../../api).
+// WASM/data are loaded from the Cache API (a service worker can't intercept its
+// own fetches, so this is what makes the DB work offline).
+import { PGlite } from '../../assets/pglite/index.js';
 
-// Category -> Supercategory list, taken from the "Category" sheet of the
-// shared expenses spreadsheet. Seeded once on first launch and then preserved
-// across launches (the inserts below are idempotent).
 const DEFAULT_CATEGORIES = [
   { category: 'Медицина', supercategory: 'Жизнь' },
   { category: 'Для дома', supercategory: 'Жизнь' },
@@ -43,17 +40,36 @@ const DEFAULT_CATEGORIES = [
   { category: 'Питомцы', supercategory: 'Обязанности' },
   { category: 'Близкие', supercategory: 'Обязанности' },
   { category: 'Путешешествие', supercategory: 'Путешествия' },
-  // Fallback bucket for CSV rows whose category can't be matched.
   { category: 'Непонятно', supercategory: 'Непонятно' },
 ];
 
-// PGLite stores an "idb://<name>" database in an IndexedDB named "/pglite/<name>".
 const DB_NAME = 'expenses';
 const IDB_NAME = `/pglite/${DB_NAME}`;
 
+async function assetFromCache(path) {
+  const res = await caches.match(path);
+  if (!res) throw new Error('PGLite asset not cached: ' + path);
+  return res;
+}
+
 async function createDb() {
-  // Persisted in IndexedDB; survives reloads and works offline.
-  const db = await PGlite.create(`idb://${DB_NAME}`);
+  // Load the WASM + data filesystem from the Cache API so the DB boots offline.
+  const [wasmRes, initdbRes, dataRes] = await Promise.all([
+    assetFromCache('assets/pglite/pglite.wasm'),
+    assetFromCache('assets/pglite/initdb.wasm'),
+    assetFromCache('assets/pglite/pglite.data'),
+  ]);
+  const [pgliteWasmModule, initdbWasmModule, fsBundle] = await Promise.all([
+    WebAssembly.compile(await wasmRes.arrayBuffer()),
+    WebAssembly.compile(await initdbRes.arrayBuffer()),
+    dataRes.blob(),
+  ]);
+
+  const db = await PGlite.create(`idb://${DB_NAME}`, {
+    pgliteWasmModule,
+    initdbWasmModule,
+    fsBundle,
+  });
 
   await db.exec(`
     CREATE TABLE IF NOT EXISTS category (
@@ -63,7 +79,6 @@ async function createDb() {
       UNIQUE (category, supercategory)
     );
 
-    -- Migrate databases created before usage_count existed.
     ALTER TABLE category ADD COLUMN IF NOT EXISTS usage_count INTEGER NOT NULL DEFAULT 0;
 
     CREATE TABLE IF NOT EXISTS expenses (
@@ -91,9 +106,6 @@ async function createDb() {
       budget        NUMERIC(12, 2) NOT NULL,
       date_from     DATE           NOT NULL,
       date_till     DATE           NOT NULL,
-      -- (category, supercategory) references the category table. When category
-      -- is NULL the FK is not enforced (MATCH SIMPLE), so a budget can target a
-      -- whole supercategory.
       FOREIGN KEY (category, supercategory)
         REFERENCES category (category, supercategory)
     );
@@ -101,36 +113,34 @@ async function createDb() {
     CREATE INDEX IF NOT EXISTS idx_budget_date_till ON budget (date_till);
   `);
 
-  // Seed default categories ONLY on first launch — i.e. when the table is
-  // still empty. If the DB already holds categories, leave it untouched.
+  // Seed default categories only on first launch (empty table).
   const { rows } = await db.query(`SELECT COUNT(*)::int AS n FROM category`);
   if (rows[0].n === 0) {
     for (const { category, supercategory } of DEFAULT_CATEGORIES) {
-      await db.query(
-        `INSERT INTO category (category, supercategory) VALUES ($1, $2)`,
-        [category, supercategory]
-      );
+      await db.query(`INSERT INTO category (category, supercategory) VALUES ($1, $2)`, [
+        category,
+        supercategory,
+      ]);
     }
   }
 
   return db;
 }
 
-// Single shared connection; `ready` resolves once the DB is initialised.
-const dbPromise = createDb();
-export const ready = dbPromise;
+// Lazy, single shared connection. Boots on the first /api request.
+let dbPromise = null;
+function getDb() {
+  return (dbPromise ||= createDb());
+}
 
 export async function listCategories() {
-  const db = await dbPromise;
+  const db = await getDb();
   const result = await db.query(
-    // Most-used categories first; alphabetical as a stable tie-breaker.
     `SELECT category, supercategory FROM category ORDER BY usage_count DESC, category`
   );
   return result.rows;
 }
 
-// Calendar date ranges for the `period` filter. Weeks start on Monday
-// (date_trunc('week') is ISO/Monday-based); month is the calendar month.
 const PERIOD_RANGES = {
   week: `data >= date_trunc('week', CURRENT_DATE)::date
          AND data < (date_trunc('week', CURRENT_DATE) + INTERVAL '7 days')::date`,
@@ -141,8 +151,7 @@ const PERIOD_RANGES = {
 };
 
 export async function listExpenses({ category, supercategory, period } = {}) {
-  const db = await dbPromise;
-  // Optionally filter by category and/or supercategory (uses the indexes).
+  const db = await getDb();
   const where = [];
   const params = [];
   if (category) {
@@ -153,13 +162,10 @@ export async function listExpenses({ category, supercategory, period } = {}) {
     params.push(supercategory);
     where.push(`supercategory = $${params.length}`);
   }
-  // Optional calendar period (week / 2weeks / month). 'all' (or unknown) = no date filter.
-  if (PERIOD_RANGES[period]) {
-    where.push(PERIOD_RANGES[period]);
-  }
+  if (PERIOD_RANGES[period]) where.push(PERIOD_RANGES[period]);
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const result = await db.query(
-    `SELECT id, data, amount, currency, description AS desc, category, supercategory
+    `SELECT id, to_char(data, 'YYYY-MM-DD') AS data, amount, currency, description AS desc, category, supercategory
      FROM expenses
      ${clause}
      ORDER BY data DESC, id DESC`,
@@ -168,13 +174,13 @@ export async function listExpenses({ category, supercategory, period } = {}) {
   return result.rows;
 }
 
-// Totals per supercategory for a calendar month: 'this' (default) or 'prev'.
 export async function supercategoryTotals({ month = 'this' } = {}) {
-  const db = await dbPromise;
-  const range = month === 'prev'
-    ? `data >= (date_trunc('month', CURRENT_DATE) - INTERVAL '1 month')::date
-       AND data < date_trunc('month', CURRENT_DATE)::date`
-    : PERIOD_RANGES.month;
+  const db = await getDb();
+  const range =
+    month === 'prev'
+      ? `data >= (date_trunc('month', CURRENT_DATE) - INTERVAL '1 month')::date
+         AND data < date_trunc('month', CURRENT_DATE)::date`
+      : PERIOD_RANGES.month;
   const result = await db.query(
     `SELECT supercategory, SUM(amount) AS total
      FROM expenses
@@ -185,13 +191,8 @@ export async function supercategoryTotals({ month = 'this' } = {}) {
   return result.rows;
 }
 
-// List budgets with their on-the-fly `spent` (SUM of matching expenses within
-// the budget's date range, supercategory, and category if the budget sets one).
-// `archived: false` (default) returns budgets that haven't ended yet;
-// `archived: true` returns only ended ones. The date_till filter comes first so
-// the planner can use idx_budget_date_till.
 export async function listBudgets({ archived = false } = {}) {
-  const db = await dbPromise;
+  const db = await getDb();
   const dateFilter = archived ? 'b.date_till < CURRENT_DATE' : 'b.date_till >= CURRENT_DATE';
   const result = await db.query(
     `SELECT b.id, b.name, b.category, b.supercategory, b.budget,
@@ -199,8 +200,7 @@ export async function listBudgets({ archived = false } = {}) {
             to_char(b.date_till, 'YYYY-MM-DD') AS date_till,
             COALESCE((
               SELECT SUM(e.amount) FROM expenses e
-              WHERE e.data >= b.date_from
-                AND e.data <= b.date_till
+              WHERE e.data >= b.date_from AND e.data <= b.date_till
                 AND e.supercategory = b.supercategory
                 AND (b.category IS NULL OR e.category = b.category)
             ), 0) AS spent
@@ -211,43 +211,15 @@ export async function listBudgets({ archived = false } = {}) {
   return result.rows;
 }
 
-export async function insertBudget({ name, category, supercategory, budget, dateFrom, dateTill }) {
-  const db = await dbPromise;
-  const result = await db.query(
-    `INSERT INTO budget (name, category, supercategory, budget, date_from, date_till)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id`,
-    [name, category || null, supercategory, budget, dateFrom, dateTill]
-  );
-  return result.rows[0];
-}
-
-export async function updateBudget(id, { name, category, supercategory, budget, dateFrom, dateTill }) {
-  const db = await dbPromise;
-  await db.query(
-    `UPDATE budget
-     SET name = $2, category = $3, supercategory = $4, budget = $5, date_from = $6, date_till = $7
-     WHERE id = $1`,
-    [id, name, category || null, supercategory, budget, dateFrom, dateTill]
-  );
-}
-
-export async function deleteBudget(id) {
-  const db = await dbPromise;
-  await db.query(`DELETE FROM budget WHERE id = $1`, [id]);
-}
-
-// A single budget with its on-the-fly `spent`. Returns null if not found.
 export async function getBudget(id) {
-  const db = await dbPromise;
+  const db = await getDb();
   const result = await db.query(
     `SELECT b.id, b.name, b.category, b.supercategory, b.budget,
             to_char(b.date_from, 'YYYY-MM-DD') AS date_from,
             to_char(b.date_till, 'YYYY-MM-DD') AS date_till,
             COALESCE((
               SELECT SUM(e.amount) FROM expenses e
-              WHERE e.data >= b.date_from
-                AND e.data <= b.date_till
+              WHERE e.data >= b.date_from AND e.data <= b.date_till
                 AND e.supercategory = b.supercategory
                 AND (b.category IS NULL OR e.category = b.category)
             ), 0) AS spent
@@ -258,16 +230,14 @@ export async function getBudget(id) {
   return result.rows[0] || null;
 }
 
-// The expenses that count toward a budget (its date range, supercategory, and
-// category if set).
 export async function budgetExpenses(id) {
-  const db = await dbPromise;
+  const db = await getDb();
   const result = await db.query(
-    `SELECT e.id, e.data, e.amount, e.currency, e.description AS desc, e.category, e.supercategory
+    `SELECT e.id, to_char(e.data, 'YYYY-MM-DD') AS data, e.amount, e.currency,
+            e.description AS desc, e.category, e.supercategory
      FROM expenses e
      JOIN budget b ON b.id = $1
-     WHERE e.data >= b.date_from
-       AND e.data <= b.date_till
+     WHERE e.data >= b.date_from AND e.data <= b.date_till
        AND e.supercategory = b.supercategory
        AND (b.category IS NULL OR e.category = b.category)
      ORDER BY e.data DESC, e.id DESC`,
@@ -276,161 +246,136 @@ export async function budgetExpenses(id) {
   return result.rows;
 }
 
-function csvEscape(value) {
-  const s = value == null ? '' : String(value);
-  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+export async function insertBudget({ name, category, supercategory, budget, dateFrom, dateTill }) {
+  const db = await getDb();
+  const result = await db.query(
+    `INSERT INTO budget (name, category, supercategory, budget, date_from, date_till)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+    [name, category || null, supercategory, budget, dateFrom, dateTill]
+  );
+  return result.rows[0];
 }
 
-// Export all expenses as a CSV string. The columns round-trip with
-// importCsv() (Date/Amount/Currency/Category/Desc are read back; Subcategory
-// is informational and ignored on import).
-export async function exportCsv() {
-  const db = await dbPromise;
-  const result = await db.query(
-    `SELECT to_char(data, 'YYYY-MM-DD') AS date, amount, currency, category, supercategory, description
-     FROM expenses
-     ORDER BY data DESC, id DESC`
+export async function updateBudget(id, { name, category, supercategory, budget, dateFrom, dateTill }) {
+  const db = await getDb();
+  await db.query(
+    `UPDATE budget
+     SET name = $2, category = $3, supercategory = $4, budget = $5, date_from = $6, date_till = $7
+     WHERE id = $1`,
+    [id, name, category || null, supercategory, budget, dateFrom, dateTill]
   );
-  const lines = [['Date', 'Amount', 'Currency', 'Category', 'Subcategory', 'Desc'].join(',')];
-  for (const r of result.rows) {
-    lines.push(
-      [r.date, r.amount, r.currency, r.category, r.supercategory, r.description].map(csvEscape).join(',')
-    );
-  }
-  return lines.join('\n');
+}
+
+export async function deleteBudget(id) {
+  const db = await getDb();
+  await db.query(`DELETE FROM budget WHERE id = $1`, [id]);
 }
 
 export async function insertExpense({ data, amount, currency, desc, category, supercategory }) {
-  const db = await dbPromise;
-  // Saving the expense is the critical operation — do it on its own so it
-  // always commits (and persists to IndexedDB).
+  const db = await getDb();
   const result = await db.query(
     `INSERT INTO expenses (data, amount, currency, description, category, supercategory)
      VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id, data, amount, currency, description AS desc, category, supercategory, created_at`,
+     RETURNING id, to_char(data, 'YYYY-MM-DD') AS data, amount, currency, description AS desc, category, supercategory`,
     [data, amount, currency, desc, category, supercategory]
   );
-
-  // Bump the category usage counter as a best-effort, non-critical step. A
-  // failure here (e.g. an old DB missing the column) must never lose the
-  // expense that was already saved above.
   try {
-    await db.query(
-      `UPDATE category SET usage_count = usage_count + 1 WHERE category = $1`,
-      [category]
-    );
+    await db.query(`UPDATE category SET usage_count = usage_count + 1 WHERE category = $1`, [category]);
   } catch (e) {
     console.warn('Could not update category usage_count:', e);
   }
-
   return result.rows[0];
 }
 
 export async function updateExpense(id, { data, amount, currency, desc, category, supercategory }) {
-  const db = await dbPromise;
+  const db = await getDb();
   const result = await db.query(
     `UPDATE expenses
      SET data = $2, amount = $3, currency = $4, description = $5, category = $6, supercategory = $7
      WHERE id = $1
-     RETURNING id, data, amount, currency, description AS desc, category, supercategory, created_at`,
+     RETURNING id, to_char(data, 'YYYY-MM-DD') AS data, amount, currency, description AS desc, category, supercategory`,
     [id, data, amount, currency, desc, category, supercategory]
   );
   return result.rows[0];
 }
 
 export async function deleteExpense(id) {
-  const db = await dbPromise;
+  const db = await getDb();
   await db.query(`DELETE FROM expenses WHERE id = $1`, [id]);
 }
 
-// Completely remove the database — closes the connection and deletes the
-// whole IndexedDB store (data AND tables). After this the app must reload;
-// on next launch createDb() rebuilds the schema and re-seeds from scratch.
 export async function resetDatabase() {
   try {
-    const db = await dbPromise;
-    await db.close();
+    if (dbPromise) {
+      const db = await dbPromise;
+      await db.close();
+    }
   } catch (e) {
-    // If the DB never opened, there is nothing to close.
     console.warn('Could not close DB before reset:', e);
   }
+  dbPromise = null;
   await new Promise((resolve) => {
     const req = indexedDB.deleteDatabase(IDB_NAME);
     req.onsuccess = req.onerror = req.onblocked = () => resolve();
   });
 }
 
-// Category name (lower-cased) aliases for matching imported CSV rows.
-const CATEGORY_ALIASES = {
-  // "кафе и рестораны" was renamed to "Кофе и рестораны".
-  'кафе и рестораны': 'кофе и рестораны',
-};
-
+const CATEGORY_ALIASES = { 'кафе и рестораны': 'кофе и рестораны' };
 const FALLBACK_CATEGORY = { category: 'Непонятно', supercategory: 'Непонятно' };
 
-// Minimal RFC-4180-ish CSV parser: handles quoted fields, embedded commas
-// (e.g. the "Налоги, документы" category), escaped quotes and CRLF.
 function parseCsv(text) {
   const rows = [];
   let row = [];
   let field = '';
   let inQuotes = false;
-
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     if (inQuotes) {
       if (c === '"') {
         if (text[i + 1] === '"') { field += '"'; i++; }
         else inQuotes = false;
-      } else {
-        field += c;
-      }
-    } else if (c === '"') {
-      inQuotes = true;
-    } else if (c === ',') {
-      row.push(field);
-      field = '';
-    } else if (c === '\n') {
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = '';
-    } else if (c !== '\r') {
-      field += c;
-    }
+      } else field += c;
+    } else if (c === '"') inQuotes = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+    else if (c !== '\r') field += c;
   }
-  if (field !== '' || row.length > 0) {
-    row.push(field);
-    rows.push(row);
-  }
+  if (field !== '' || row.length > 0) { row.push(field); rows.push(row); }
   return rows;
 }
 
 function parseAmount(raw) {
   let a = String(raw || '').replace(/\s/g, '');
-  // "1,050.50" -> drop thousands commas; "23,6" -> decimal comma.
   a = a.includes('.') ? a.replace(/,/g, '') : a.replace(',', '.');
   return parseFloat(a);
 }
 
-// Import expenses from a CSV string. Columns: Date, Amount, Category, Desc
-// (matched by header name when present, otherwise by position). Categories
-// are matched case-insensitively against the DB; unmatched rows fall back to
-// "Непонятно". Returns { total, imported, unmatched, skipped }.
-export async function importCsv(text) {
-  const db = await dbPromise;
+export async function exportCsv() {
+  const db = await getDb();
+  const result = await db.query(
+    `SELECT to_char(data, 'YYYY-MM-DD') AS date, amount, currency, category, supercategory, description
+     FROM expenses ORDER BY data DESC, id DESC`
+  );
+  const esc = (v) => {
+    const s = v == null ? '' : String(v);
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const lines = [['Date', 'Amount', 'Currency', 'Category', 'Subcategory', 'Desc'].join(',')];
+  for (const r of result.rows) {
+    lines.push([r.date, r.amount, r.currency, r.category, r.supercategory, r.description].map(esc).join(','));
+  }
+  return lines.join('\n');
+}
 
-  // Ensure the fallback category exists (older DBs were seeded without it).
+export async function importCsv(text) {
+  const db = await getDb();
   await db.query(
     `INSERT INTO category (category, supercategory) VALUES ($1, $2) ON CONFLICT (category) DO NOTHING`,
     [FALLBACK_CATEGORY.category, FALLBACK_CATEGORY.supercategory]
   );
-
-  // Build a lookup of existing categories keyed by lower-cased name.
   const existing = (await db.query(`SELECT category, supercategory FROM category`)).rows;
   const byLower = new Map();
   for (const c of existing) byLower.set(c.category.toLowerCase(), c);
-
   const resolveCategory = (raw) => {
     let key = String(raw || '').trim().toLowerCase();
     if (CATEGORY_ALIASES[key]) key = CATEGORY_ALIASES[key];
@@ -440,8 +385,6 @@ export async function importCsv(text) {
   const rows = parseCsv(text.replace(/^﻿/, ''));
   if (rows.length === 0) return { total: 0, imported: 0, unmatched: 0, skipped: 0 };
 
-  // Detect a header row to map columns; otherwise assume positional order.
-  // Accepts both "Date/Amount" and the spreadsheet's "When/How much" names.
   let start = 0;
   let idx = { date: 0, amount: 1, category: 2, desc: 3, currency: -1 };
   const header = rows[0].map((h) => h.trim().toLowerCase());
@@ -452,9 +395,7 @@ export async function importCsv(text) {
     }
     return -1;
   };
-  const looksLikeHeader =
-    find('date', 'when') !== -1 || find('amount', 'how much') !== -1 || find('category') !== -1;
-  if (looksLikeHeader) {
+  if (find('date', 'when') !== -1 || find('amount', 'how much') !== -1 || find('category') !== -1) {
     start = 1;
     idx = {
       date: find('date', 'when'),
@@ -464,38 +405,24 @@ export async function importCsv(text) {
       currency: find('currency'),
     };
     if (idx.date === -1 || idx.amount === -1) {
-      throw new Error(
-        'CSV header must include a date (Date/When) and an amount (Amount/How much) column.'
-      );
+      throw new Error('CSV header must include a date (Date/When) and an amount (Amount/How much) column.');
     }
   }
 
-  let total = 0;
-  let imported = 0;
-  let unmatched = 0;
-  let skipped = 0;
+  let total = 0, imported = 0, unmatched = 0, skipped = 0;
   const usageBump = new Map();
-
   for (let r = start; r < rows.length; r++) {
     const cols = rows[r];
-    // Skip fully blank lines.
     if (cols.length === 1 && cols[0].trim() === '') continue;
-
     const dateRaw = (cols[idx.date] || '').trim();
     const amount = parseAmount(cols[idx.amount]);
     if (!dateRaw && Number.isNaN(amount)) continue;
     total++;
-
-    if (!dateRaw || Number.isNaN(amount)) {
-      skipped++;
-      continue;
-    }
-
+    if (!dateRaw || Number.isNaN(amount)) { skipped++; continue; }
     const resolved = resolveCategory(idx.category >= 0 ? cols[idx.category] : '');
     if (resolved === FALLBACK_CATEGORY) unmatched++;
     const desc = idx.desc >= 0 ? (cols[idx.desc] || '').trim() : '';
     const currency = idx.currency >= 0 && cols[idx.currency] ? cols[idx.currency].trim() : 'EUR';
-
     try {
       await db.query(
         `INSERT INTO expenses (data, amount, currency, description, category, supercategory)
@@ -509,8 +436,6 @@ export async function importCsv(text) {
       skipped++;
     }
   }
-
-  // Best-effort: reflect imported rows in the usage counters.
   try {
     for (const [category, n] of usageBump) {
       await db.query(`UPDATE category SET usage_count = usage_count + $2 WHERE category = $1`, [category, n]);
@@ -518,6 +443,101 @@ export async function importCsv(text) {
   } catch (e) {
     console.warn('Could not update usage counts after import:', e);
   }
-
   return { total, imported, unmatched, skipped };
+}
+
+// ---- Budgets CSV ----
+
+export async function exportBudgetsCsv() {
+  const db = await getDb();
+  const result = await db.query(
+    `SELECT name, category, supercategory, budget,
+            to_char(date_from, 'YYYY-MM-DD') AS date_from,
+            to_char(date_till, 'YYYY-MM-DD') AS date_till
+     FROM budget ORDER BY date_till, id`
+  );
+  const esc = (v) => {
+    const s = v == null ? '' : String(v);
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const lines = [['Name', 'Category', 'Supercategory', 'Budget', 'From', 'Till'].join(',')];
+  for (const r of result.rows) {
+    lines.push([r.name, r.category || '', r.supercategory, r.budget, r.date_from, r.date_till].map(esc).join(','));
+  }
+  return lines.join('\n');
+}
+
+// Import budgets from CSV. Columns: Name, Category, Supercategory, Budget, From,
+// Till. A row whose supercategory (or category, when given) isn't in the local
+// category table is skipped and reported. Returns
+// { total, imported, skipped, skippedRows: [{ line, name, reason }] }.
+export async function importBudgetsCsv(text) {
+  const db = await getDb();
+  const cats = (await db.query(`SELECT category, supercategory FROM category`)).rows;
+  const supercats = new Set(cats.map((c) => c.supercategory));
+  const pairs = new Set(cats.map((c) => c.category + ' ' + c.supercategory));
+
+  const rows = parseCsv(text.replace(/^﻿/, ''));
+  if (rows.length === 0) return { total: 0, imported: 0, skipped: 0, skippedRows: [] };
+
+  let start = 0;
+  let idx = { name: 0, category: 1, supercategory: 2, budget: 3, from: 4, till: 5 };
+  const header = rows[0].map((h) => h.trim().toLowerCase());
+  const find = (...names) => {
+    for (const n of names) {
+      const i = header.indexOf(n);
+      if (i !== -1) return i;
+    }
+    return -1;
+  };
+  if (find('name') !== -1 || find('supercategory') !== -1 || find('budget') !== -1) {
+    start = 1;
+    idx = {
+      name: find('name'),
+      category: find('category'),
+      supercategory: find('supercategory', 'subcategory'),
+      budget: find('budget', 'amount'),
+      from: find('from', 'date_from'),
+      till: find('till', 'date_till'),
+    };
+  }
+
+  let total = 0, imported = 0, skipped = 0;
+  const skippedRows = [];
+  for (let r = start; r < rows.length; r++) {
+    const cols = rows[r];
+    if (cols.length === 1 && cols[0].trim() === '') continue;
+    const get = (i) => (i >= 0 && cols[i] != null ? String(cols[i]).trim() : '');
+    const name = get(idx.name);
+    const category = get(idx.category);
+    const supercategory = get(idx.supercategory);
+    const budget = parseAmount(get(idx.budget));
+    const from = get(idx.from);
+    const till = get(idx.till);
+    if (!name && !supercategory && Number.isNaN(budget)) continue;
+    total++;
+
+    let reason = null;
+    if (!supercategory || !supercats.has(supercategory)) reason = `supercategory "${supercategory}" not in DB`;
+    else if (category && !pairs.has(category + ' ' + supercategory)) reason = `category "${category}" not in "${supercategory}"`;
+    else if (Number.isNaN(budget) || !from || !till) reason = 'missing budget/from/till';
+
+    if (reason) {
+      skipped++;
+      skippedRows.push({ line: r + 1, name, reason });
+      continue;
+    }
+    try {
+      await db.query(
+        `INSERT INTO budget (name, category, supercategory, budget, date_from, date_till)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [name, category || null, supercategory, budget, from, till]
+      );
+      imported++;
+    } catch (e) {
+      skipped++;
+      skippedRows.push({ line: r + 1, name, reason: String((e && e.message) || e) });
+    }
+  }
+  return { total, imported, skipped, skippedRows };
 }

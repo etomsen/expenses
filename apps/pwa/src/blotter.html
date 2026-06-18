@@ -76,7 +76,7 @@
             this.db = await window.__expenseDBReady;
             await this.db.ready;
             await this.reloadExpenses();
-            this.categories = await this.db.listCategories();
+            this.categories = await this.db.categories.list();
           } catch (e) {
             console.error(e);
             this.message = 'Could not load expenses';
@@ -85,7 +85,7 @@
           }
         },
         async reloadExpenses() {
-          this.expenses = await this.db.listExpenses({
+          this.expenses = await this.db.expenses.list({
             category: this.filterCategory || undefined,
             supercategory: this.filterSupercategory || undefined,
             period: this.period
@@ -141,7 +141,7 @@
           this.saving = true;
           this.editMessage = '';
           try {
-            await this.db.updateExpense(this.edit.id, {
+            await this.db.expenses.update(this.edit.id, {
               data: new Date(this.edit.date).toISOString(),
               amount: this.editAmountValue,
               currency: this.edit.currency,
@@ -163,7 +163,7 @@
           this.deleting = true;
           this.editMessage = '';
           try {
-            await this.db.deleteExpense(this.edit.id);
+            await this.db.expenses.remove(this.edit.id);
             await this.reloadExpenses();
             this.showEdit = false;
           } catch (e) {

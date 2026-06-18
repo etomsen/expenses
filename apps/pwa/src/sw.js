@@ -1,71 +1,35 @@
-// Service worker: precache the full app shell (including the PGLite WASM +
-// data files) so the app — and its in-browser Postgres database — work with
-// no network at all. The precache list is generated at build time into
-// precache.json, which keeps the hashed PGLite chunk filenames in sync.
-const CACHE = 'expenses-pwa-v35';
+// Legacy migration shim — intentionally a CLASSIC script (no import/export), so
+// it parses under ANY existing registration. Older clients registered this URL
+// as a classic worker (and briefly as a module worker); when the browser checks
+// this URL for an update it re-parses it with that original type. A module
+// worker (top-level `import`) fails to parse as classic ("Cannot use import
+// statement outside a module"), which left those clients permanently unable to
+// update. This shim has no imports, so the update finally succeeds.
+//
+// Its only job is to step aside for the real module worker (app-sw.js): take
+// control, drop the stale precache so the next navigation loads fresh HTML, and
+// let that fresh page register app-sw.js. User data lives in IndexedDB and is
+// left untouched.
+self.addEventListener('install', () => self.skipWaiting());
 
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    (async () => {
-      const cache = await caches.open(CACHE);
-      const res = await fetch('precache.json', { cache: 'no-cache' });
-      const urls = await res.json();
-      // Always include the navigation entry point.
-      await cache.addAll(['./', ...urls]);
-      // NOTE: we intentionally do NOT skipWaiting here — the new worker waits
-      // until the page confirms the update (see the message handler below).
-    })()
-  );
-});
-
-// Activate immediately only when the page asks us to (the update prompt).
+// Identify ourselves to the update prompt so it can migrate silently (no
+// "update available" dialog for a transient shim) instead of looping.
 self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'SKIP_WAITING') {
-    self.skipWaiting();
+  if (event.data && event.data.type === 'GET_VERSION' && event.ports[0]) {
+    event.ports[0].postMessage({ version: 'shim' });
   }
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
-      // Drop caches from previous versions.
       const keys = await caches.keys();
-      await Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)));
+      await Promise.all(keys.map((k) => caches.delete(k)));
       await self.clients.claim();
     })()
   );
 });
 
-self.addEventListener('fetch', (event) => {
-  const { request } = event;
-  if (request.method !== 'GET') return;
-
-  const url = new URL(request.url);
-  if (url.origin !== self.location.origin) return;
-
-  event.respondWith(
-    (async () => {
-      const cache = await caches.open(CACHE);
-
-      // Cache-first: fully offline once installed.
-      const cached = await cache.match(request, { ignoreSearch: true });
-      if (cached) return cached;
-
-      try {
-        const response = await fetch(request);
-        // Cache successful same-origin responses for next time.
-        if (response.ok && response.type === 'basic') {
-          cache.put(request, response.clone());
-        }
-        return response;
-      } catch (err) {
-        // Offline and not cached: fall back to the app shell for navigations.
-        if (request.mode === 'navigate') {
-          const shell = await cache.match('index.html');
-          if (shell) return shell;
-        }
-        throw err;
-      }
-    })()
-  );
-});
+// No fetch handler: every request goes to the network so clients pick up the
+// latest HTML/assets. Once the fresh page registers app-sw.js, this shim is
+// replaced.

@@ -2,38 +2,66 @@
   x-data="{
     showUpdate: false,
     waitingWorker: null,
-    updating: false,
+    localVersion: '',
+    remoteVersion: '',
+    reloading: false,
+    // Ask a worker for its version over a MessageChannel; null if it doesn't answer.
+    swVersion(worker) {
+      return new Promise((resolve) => {
+        if (!worker) return resolve(null);
+        const ch = new MessageChannel();
+        let done = false;
+        ch.port1.onmessage = (e) => { done = true; resolve(e.data && e.data.version); };
+        try { worker.postMessage({ type: 'GET_VERSION' }, [ch.port2]); }
+        catch (e) { return resolve(null); }
+        setTimeout(() => { if (!done) resolve(null); }, 1500);
+      });
+    },
     init() {
       if (!('serviceWorker' in navigator)) return;
 
-      // Reload only after the user confirmed the update and the new worker
-      // took control (not on the first-install clients.claim()).
+      // A controller change means a new worker took over — reload once so the
+      // page runs the new version. Skip the first install (no prior controller)
+      // and guard against reloading more than once (no update loop).
+      const hadController = !!navigator.serviceWorker.controller;
       navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (this.updating) location.reload();
+        if (!hadController || this.reloading) return;
+        this.reloading = true;
+        location.reload();
       });
 
-      navigator.serviceWorker.register('sw.js').then((reg) => {
-        const promptFor = (worker) => {
-          // Only prompt for updates (an existing controller), not first install.
-          if (worker && navigator.serviceWorker.controller) {
-            this.waitingWorker = worker;
-            this.showUpdate = true;
-          }
+      navigator.serviceWorker.register('app-sw.js', { type: 'module' }).then((reg) => {
+        const consider = async (worker) => {
+          if (!worker) return;
+          const controller = navigator.serviceWorker.controller;
+          if (!controller) return; // first install — just let it activate
+          const remote = await this.swVersion(worker);
+          // The incoming worker is the migration shim; it activates itself.
+          if (remote === 'shim') return;
+          const local = await this.swVersion(controller);
+          // We're running on the shim mid-migration — pull in the real worker
+          // silently, no dialog.
+          if (local === 'shim') { worker.postMessage({ type: 'SKIP_WAITING' }); return; }
+          // Same version on both sides — nothing to do (and don't loop).
+          if (remote && local && remote === local) return;
+          this.localVersion = local || '?';
+          this.remoteVersion = remote || '?';
+          this.waitingWorker = worker;
+          this.showUpdate = true;
         };
         // A new worker already installed and waiting (e.g. declined last time).
-        if (reg.waiting) promptFor(reg.waiting);
+        if (reg.waiting) consider(reg.waiting);
         // A new worker starts installing while the page is open.
         reg.addEventListener('updatefound', () => {
           const nw = reg.installing;
           if (!nw) return;
           nw.addEventListener('statechange', () => {
-            if (nw.state === 'installed') promptFor(nw);
+            if (nw.state === 'installed') consider(nw);
           });
         });
       }).catch((e) => console.error('SW registration failed:', e));
     },
     update() {
-      this.updating = true;
       if (this.waitingWorker) this.waitingWorker.postMessage({ type: 'SKIP_WAITING' });
       this.showUpdate = false;
     }
@@ -44,7 +72,13 @@
       <header>
         <p><strong>Update available</strong></p>
       </header>
-      <p>Update is available. Do you want to update?</p>
+      <p>A new version is available. Do you want to update?</p>
+      <p>
+        <small>
+          Current: <strong x-text="localVersion"></strong> ·
+          New: <strong x-text="remoteVersion"></strong>
+        </small>
+      </p>
       <footer>
         <button class="secondary" @click="showUpdate = false">Later</button>
         <button @click="update()">Update</button>

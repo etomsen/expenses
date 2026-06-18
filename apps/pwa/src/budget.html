@@ -45,7 +45,7 @@
             this.archived = new URLSearchParams(location.search).get('archived') === 'true';
             this.db = await window.__expenseDBReady;
             await this.db.ready;
-            this.categories = await this.db.listCategories();
+            this.categories = await this.db.categories.list();
             await this.reload();
           } catch (e) {
             console.error(e);
@@ -55,7 +55,7 @@
           }
         },
         async reload() {
-          this.budgets = await this.db.listBudgets({ archived: this.archived });
+          this.budgets = await this.db.budgets.list({ archived: this.archived });
         },
         get supercategories() {
           return [...new Set(this.categories.map((c) => c.supercategory))].sort();
@@ -106,8 +106,8 @@
             dateTill: this.form.dateTill
           };
           try {
-            if (this.editingId) await this.db.updateBudget(this.editingId, data);
-            else await this.db.insertBudget(data);
+            if (this.editingId) await this.db.budgets.update(this.editingId, data);
+            else await this.db.budgets.create(data);
             await this.reload();
             this.showAdd = false;
           } catch (e) {
@@ -122,7 +122,7 @@
           this.deleting = true;
           this.addMessage = '';
           try {
-            await this.db.deleteBudget(this.editingId);
+            await this.db.budgets.remove(this.editingId);
             await this.reload();
             this.showAdd = false;
           } catch (e) {

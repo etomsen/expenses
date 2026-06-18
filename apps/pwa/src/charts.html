@@ -39,7 +39,7 @@
             this.month = new URLSearchParams(location.search).get('month') === 'prev' ? 'prev' : 'this';
             const db = await window.__expenseDBReady;
             await db.ready;
-            const rows = await db.supercategoryTotals({ month: this.month });
+            const rows = await db.charts.supercategoryTotals({ month: this.month });
             this.segments = rows.map((r, i) => ({
               label: r.supercategory,
               value: Number(r.total),

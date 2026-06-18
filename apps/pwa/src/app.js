@@ -1,10 +1,22 @@
-// Entry module: loads the PGLite-backed database and exposes it to the
-// (non-module) Alpine component on the page. Using a real module here means
-// the './db.js' specifier resolves correctly — unlike a dynamic import()
-// evaluated inside an Alpine expression, which has no reliable base URL.
-import * as db from './db.js';
+// The app no longer touches the database directly. It talks to the service
+// worker over /api/* through these client modules. This file aggregates them
+// into a namespaced API and resolves the page's readiness promise.
+import * as categories from './client/categories.api.js';
+import * as expenses from './client/expenses.api.js';
+import * as charts from './client/charts.api.js';
+import * as budgets from './client/budgets.api.js';
+import * as database from './client/database.api.js';
+import { whenReady } from './client/http.js';
 
-window.ExpenseDB = db;
-// Resolve the readiness promise the page set up in <head> so the Alpine
-// component can grab the DB regardless of script execution order.
-if (window.__resolveExpenseDB) window.__resolveExpenseDB(db);
+const api = {
+  categories,
+  expenses,
+  charts,
+  budgets,
+  database,
+  // `ready` resolves once a service worker controls the page (so /api/* works).
+  ready: whenReady(),
+};
+
+window.ExpenseApi = api;
+if (window.__resolveExpenseDB) window.__resolveExpenseDB(api);

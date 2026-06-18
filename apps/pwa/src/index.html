@@ -54,7 +54,7 @@
             try {
               this.db = await window.__expenseDBReady;
               await this.db.ready;
-              this.categories = await this.db.listCategories();
+              this.categories = await this.db.categories.list();
               localStorage.setItem('tomsy.categories', JSON.stringify(this.categories));
             } catch (e) {
               console.error(e);
@@ -96,7 +96,7 @@
               // The form is usable before PGLite finishes booting; ensure the DB
               // is ready before the insert.
               const db = this.db || (this.db = await window.__expenseDBReady);
-              const saved = await db.insertExpense(payload);
+              const saved = await db.expenses.create(payload);
               this.message = 'Saved expense #' + saved.id;
               this.form.amount = '';
               this.form.description = '';

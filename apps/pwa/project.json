@@ -28,6 +28,14 @@
       "options": {
         "command": "http-server dist/pwa -p 4300 -c-1 -o"
       }
+    },
+    "preview": {
+      "executor": "nx:run-commands",
+      "continuous": true,
+      "dependsOn": ["build"],
+      "options": {
+        "command": "http-server dist/pwa -p 4300 -c-1 --silent"
+      }
     }
   }
 }

@@ -12,6 +12,7 @@ PGLite, no bundler (vanilla ES modules, vendored deps), built with **Nx**.
 ```
 apps/
   pwa/      ← the product. Offline-first PWA (this is what's worked on)
+  pwa-e2e/  ← Playwright E2E tests for the PWA
   web/      ← legacy: original static frontend that called apps/server (kept, not deployed)
   server/   ← legacy: Express + Postgres (pg) backend (superseded by PGLite in pwa)
 libs/
@@ -91,6 +92,23 @@ resolve at build time, so editing `src`/`templates` needs a rebuild).
   navbar on every page) detects a waiting worker and shows
   "Update is available. Do you want to update?"; confirming posts `SKIP_WAITING`
   and reloads, declining keeps the current version and re-prompts next launch.
+
+## apps/pwa-e2e
+
+Playwright E2E tests, structured like the re-finflow reference:
+
+- `playwright.config.ts` — `nxE2EPreset`, Chromium only, `testMatch: '**/*.integrations.ts'`,
+  reports under `dist/pwa-e2e/`. Runs against `http://localhost:4300`.
+  **`serviceWorkers: 'allow'`** — unlike most apps this PWA's data layer *is* the SW
+  (PGLite answers `/api/*`), so the SW must run. Builds the config path from
+  `workspaceRoot` (not `__filename`) so it loads under both nx's and Playwright's loaders.
+- `src/<feature>/<feature>.po.ts` — page objects (role/text selectors).
+- `src/<feature>/<feature>.integrations.ts` — tests (`*.integrations.ts`).
+- The `e2e` target is **inferred** by `@nx/playwright/plugin` (see `nx.json` plugins).
+  Its web server is `pwa:preview` (a `continuous` target: `build` → `http-server dist/pwa`).
+
+Run: `nx e2e pwa-e2e` (builds the pwa, serves it, runs the tests). Browsers:
+`npx playwright install chromium` first (CI does this).
 
 ## Deploy
 

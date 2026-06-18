@@ -3,12 +3,19 @@
   "version": "0.0.0",
   "license": "MIT",
   "private": true,
-  "workspaces": ["libs/*"],
+  "workspaces": [
+    "libs/*"
+  ],
   "scripts": {
     "serve": "nx serve web",
     "build": "nx build web"
   },
   "devDependencies": {
+    "@nx/devkit": "^22.7.5",
+    "@nx/js": "^22.7.5",
+    "@nx/playwright": "^22.7.5",
+    "@playwright/test": "^1.61.0",
+    "@types/node": "^22.19.21",
     "http-server": "^14.1.1",
     "nx": "22.7.5"
   },

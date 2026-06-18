@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2021",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2021", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "allowJs": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "outDir": "out-tsc/playwright",
+    "sourceMap": false
+  },
+  "include": [
+    "**/*.ts",
+    "playwright.config.ts",
+    "src/**/*.ts"
+  ],
+  "exclude": ["out-tsc", "test-output", "node_modules"]
+}

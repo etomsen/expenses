@@ -56,7 +56,9 @@ export default defineConfig({
   webServer: {
     command: 'npx nx run pwa:preview',
     url: baseURL,
-    reuseExistingServer: !isCI,
+    // true (not !isCI): nx starts pwa:preview as the e2e task's continuous
+    // dependency, and Playwright reuses it instead of racing a second server.
+    reuseExistingServer: true,
     timeout: 120_000,
   },
   projects: [

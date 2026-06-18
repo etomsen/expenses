@@ -1,0 +1,122 @@
+# CI for the Nx monorepo, following the re-finflow pattern:
+#   install -> test -> e2e -> deploy
+# `nx affected` runs only the projects touched by the change, and deploys are
+# split into one job per deployable project (only `pwa` exists for now).
+name: CI
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+  workflow_dispatch:
+
+# Read-only by default; the deploy job widens its own permissions.
+permissions:
+  contents: read
+
+env:
+  NX_VERBOSE_LOGGING: "false"
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+
+  test:
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      # Sets NX_BASE / NX_HEAD for `nx affected`.
+      - uses: nrwl/nx-set-shas@v4
+      - name: Test affected
+        run: npx nx affected -t test --output-style=stream
+
+  e2e:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - uses: nrwl/nx-set-shas@v4
+      - name: E2E affected
+        run: npx nx affected -t e2e --output-style=stream
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: dist/*-e2e/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Determine which deployable projects were touched, so each deploy job below
+  # only runs when its project actually changed (the re-finflow "generate
+  # deploy pipeline" step, expressed as job outputs).
+  affected:
+    needs: e2e
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    outputs:
+      pwa: ${{ steps.detect.outputs.pwa }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      - uses: nrwl/nx-set-shas@v4
+      - name: Detect affected projects
+        id: detect
+        shell: bash
+        run: |
+          AFFECTED="$(npx nx show projects --affected --base="$NX_BASE" --head="$NX_HEAD")"
+          echo "Affected projects: $AFFECTED"
+          if node -e "let a;try{a=JSON.parse(process.argv[1])}catch(e){a=process.argv[1].split('\n')};process.exit(a.map(s=>s.trim()).includes('pwa')?0:1)" "$AFFECTED"; then
+            echo "pwa=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "pwa=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # One deploy job per project (re-finflow's separate deploy jobs). The existing
+  # GitHub Pages deploy lives here as the pwa deploy.
+  deploy-pwa:
+    needs: affected
+    if: needs.affected.outputs.pwa == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # Allow only one concurrent Pages deployment; let production deploys finish.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - name: Build PWA with Nx
+        run: npx nx build pwa
+      # Pages serves a project site under /<repo>/; .nojekyll keeps tooling honest.
+      - name: Disable Jekyll
+        run: touch dist/pwa/.nojekyll
+      - name: Setup Pages
+        uses: actions/configure-pages@v6
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist/pwa
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

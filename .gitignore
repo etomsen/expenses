@@ -8,9 +8,5 @@ apps/web/src/assets/alpine.min.js
 apps/web/src/assets/alpine-mask.min.js
 apps/web/src/assets/pico.min.css
 
-# Auto-vendored by the "vendor" target (tools/vendor-pwa-assets.mjs)
-apps/pwa/src/assets/alpine.min.js
-apps/pwa/src/assets/alpine-mask.min.js
-apps/pwa/src/assets/pico.min.css
-apps/pwa/src/assets/pglite/
-apps/pwa/src/precache.json
+# Auto-vendored by the pwa "vendor" target (tools/vendor-pglite.mjs)
+apps/pwa/public/assets/pglite/

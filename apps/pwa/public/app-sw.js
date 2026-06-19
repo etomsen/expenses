@@ -9,7 +9,7 @@
 // so the interceptors come in via this top-level (module) import.
 import { interceptors } from './sw/interceptors/index.js';
 
-const CACHE = 'expenses-pwa-v41';
+const CACHE = 'expenses-pwa-v42';
 const API_CACHE = 'expenses-api';
 // Reported to the update prompt (GET_VERSION) so it can show current vs. new.
 const VERSION = CACHE.replace('expenses-pwa-', '');

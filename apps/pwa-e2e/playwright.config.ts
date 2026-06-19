@@ -50,8 +50,8 @@ export default defineConfig({
   },
   /**
    * Build the PWA and serve the static dist with http-server. `pwa:preview`
-   * depends on `pwa:build` (vendor -> copy -> templater), so the served app
-   * shell always matches the source.
+   * depends on `pwa:build` (vendor PGLite -> vite build -> gen-precache), so the
+   * served app shell always matches the source.
    */
   webServer: {
     command: 'npx nx run pwa:preview',

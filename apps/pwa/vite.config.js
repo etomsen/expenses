@@ -21,6 +21,11 @@ export default defineConfig({
   build: {
     outDir: resolve(here, '../../dist/pwa'),
     emptyOutDir: true,
+    // Keep SVGs as emitted files rather than inlined data URIs: the navbar mask
+    // icons are referenced from `mask-image: url(--icon)`, and Vite's
+    // URL-encoded SVG data URIs contain raw single quotes that an unquoted
+    // url() rejects on stricter parsers (iOS Safari) — a clean file URL avoids it.
+    assetsInlineLimit: (filePath) => (filePath.endsWith('.svg') ? false : undefined),
     rollupOptions: {
       input: {
         index: resolve(root, 'index.html'),

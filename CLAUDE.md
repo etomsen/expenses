@@ -4,8 +4,8 @@ An **offline-first PWA** for tracking expenses. All data lives in the browser
 (no backend): a full Postgres runs client-side via **PGLite** (WASM), persisted
 to IndexedDB. Deployed as a static site to GitHub Pages.
 
-Live: https://etomsen.github.io/expenses/ · Stack: Alpine.js + Pico CSS +
-PGLite, no bundler (vanilla ES modules, vendored deps), built with **Nx**.
+Live: https://etomsen.github.io/expenses/ · Stack: **Svelte 5** (no SvelteKit) +
+Pico CSS + PGLite, bundled with **Vite** (multi-page), built with **Nx**.
 
 ## Monorepo layout
 
@@ -15,83 +15,106 @@ apps/
   pwa-e2e/  ← Playwright E2E tests for the PWA
   web/      ← legacy: original static frontend that called apps/server (kept, not deployed)
   server/   ← legacy: Express + Postgres (pg) backend (superseded by PGLite in pwa)
-libs/
-  templater/  ← Nx generator that inlines <template x-src> includes at build time
-tools/        ← plain ESM build scripts (vendor assets, copy app)
+tools/      ← plain ESM build scripts (vendor-pglite, gen-precache; copy-app/vendor-assets are legacy web/server)
 ```
 
-Active development is **`apps/pwa`** + **`libs/templater`**. `apps/web` and
-`apps/server` are the original client/server design, kept for reference.
+Active development is **`apps/pwa`**. `apps/web` and `apps/server` are the
+original client/server design, kept for reference (and still use `tools/copy-app.mjs`
+/ `tools/vendor-assets.mjs`).
 
 ## apps/pwa
 
+A Vite **multi-page** app: one HTML entry per page, each mounting a Svelte root
+component. `base: './'` (relative URLs) so it works under the GitHub Pages
+subpath (`/expenses/`) and at `/` locally.
+
 ```
+vite.config.js     MPA config (5 .html inputs, base './', publicDir ../public, outDir dist/pwa)
 src/
-  index.html      Add-expense form
-  blotter.html    Expense table: filter by category/supercategory, edit/delete, mobile styles
-  charts.html     Pie chart (custom <canvas>, no library) of spend by supercategory
-  db.js           PGLite database module (schema + all queries) — the data layer
-  app.js          ES module: imports db.js, sets window.ExpenseDB, resolves the readiness promise
-  sw.js           Service worker: precache + cache-first offline + update-prompt support
-  manifest.webmanifest, icons/
-  assets/         VENDORED (gitignored) — alpine, pico, pglite; produced by the vendor step
-  precache.json   GENERATED (gitignored) — list of files the SW precaches
-templates/        Build-time includes (NOT served): navbar.html, db-ready.js, update-prompt.html
-project.json      Nx targets: vendor, build, serve
+  index.html  blotter.html  charts.html  budget.html  budget-transactions.html
+              ← minimal entries; each loads pages/<name>.js
+  pages/<name>.js   mounts Navbar + the page component + UpdatePrompt into <body>
+  lib/
+    components/     Svelte UI: Navbar, UpdatePrompt, AddExpense, Blotter, Charts,
+                    Budget, BudgetTransactions (one root component per page)
+    client/         page-side data access: *.api.js + http.js — call the SW over /api/*
+  assets/nav/*.svg  navbar mask icons (imported via Vite, inlined as data URIs)
+public/             ← Vite copies VERBATIM to the output root (never bundled)
+  app-sw.js         module service worker: precache + cache-first + /api routing
+  sw/               interceptors/ (per-resource /api handlers) + store/db.js (PGLite)
+  sw.js             classic kill-switch shim (owns the legacy sw.js URL)
+  manifest.webmanifest  icons/  assets/pglite/ (VENDORED, gitignored)
+project.json        Nx targets: vendor, build, dev, serve, preview
 ```
 
-### Data layer (`db.js`)
+### Data layer — PGLite in the service worker, reached over `/api/*`
 
-- One PGLite instance at `idb://expenses` (IndexedDB-backed, survives reloads, fully offline).
-- Tables: `category(category PK, supercategory, usage_count)` and
-  `expenses(id, data DATE, amount, currency, description, category, supercategory, created_at)`
-  with indexes on `data`, `supercategory`, `category`.
-- Categories are **seeded only on first launch** (when the table is empty) from a
-  hardcoded list mirroring the source spreadsheet; unknown CSV-import categories
-  fall back to **`Непонятно`**. `usage_count` orders the Add-form dropdown by frequency.
-- Exports: `ready`, `listCategories`, `listExpenses({category, supercategory})`,
-  `supercategoryTotals`, `insertExpense`, `updateExpense`, `deleteExpense`,
-  `importCsv`, `exportCsv`, `resetDatabase`. Import/export CSV round-trip losslessly
-  (quote-aware parser; `кафе и рестораны`→`Кофе и рестораны` alias).
+The page never touches PGLite directly. It runs **inside `app-sw.js`** (a service
+worker can serve the DB with no network — see commit history "run PGLite in the
+service worker behind /api/\*").
+
+- `public/sw/store/db.js` — the actual data layer: one PGLite instance at
+  `idb://expenses` (IndexedDB-backed, offline). Tables `category(category PK,
+  supercategory, usage_count)` and `expenses(id, data DATE, amount, currency,
+  description, category, supercategory, created_at)`, plus budgets. Categories are
+  **seeded only on first launch**; unknown CSV-import categories fall back to
+  **`Непонятно`**. `desc` is a reserved SQL word → the column is `description`
+  (aliased `AS desc` in SELECTs).
+- `public/sw/interceptors/*` — per-resource handlers matched by `app-sw.js` for
+  `/api/categories`, `/api/expenses`, `/api/supercategory-totals`, `/api/budgets`,
+  `/api/reset`, `/api/import`, `/api/export`. GET responses are cached; writes bust
+  that cache.
+- `src/lib/client/*.api.js` + `http.js` — the page's typed wrappers around `fetch`
+  to those routes. `http.js` `whenReady()` waits until a SW controls the page; the
+  api calls await it internally. Import these directly in components — there is **no**
+  `window.ExpenseDB` / `__expenseDBReady` global anymore.
 
 ### How a page boots
 
-1. `<head>` runs `db-ready.js` (a templated `<script>`) which creates
-   `window.__expenseDBReady` (a promise) + `window.__resolveExpenseDB`.
-2. `app.js` (a `type=module`) imports `db.js` — importing it kicks off PGLite
-   init — then sets `window.ExpenseDB` and resolves `__expenseDBReady`.
-3. Page Alpine components do `await window.__expenseDBReady` then `await db.ready`
-   before querying. Pages talk to the DB **only** through `window.ExpenseDB` / the
-   resolved module — never import `db.js` directly in inline Alpine (the specifier
-   wouldn't resolve there).
+1. The `.html` entry loads `pages/<name>.js` (`type=module`, bundled by Vite).
+2. That script imports Pico's CSS and `mount()`s `Navbar`, the page component, and
+   `UpdatePrompt` into `document.body` (in that order → header, main, dialogs).
+3. Components call the `lib/client/*` api functions; each awaits the SW being ready,
+   then hits `/api/*`, which `app-sw.js` answers from PGLite.
 
-### Templater (`libs/templater`)
+### Shared UI (replaces the old templater)
 
-Shared markup (navbar, head scripts) lives once in `apps/pwa/templates/` and is
-pulled into pages with `<template x-src="navbar.html"></template>`. At build the
-`build-templates` Nx generator inlines them (`.html` verbatim, `.js` wrapped in
-`<script>`). It's linked via npm **workspaces** (`"workspaces": ["libs/*"]`) so
-`npm ci` resolves `@tomsy/templater` in CI. See `libs/templater/README.md`.
-
-The shared `navbar.html` marks the active link at runtime (`isCurrent()` reads
-`location.pathname`) since one file serves every page.
+`Navbar.svelte` (nav links + the DB Import/Export/Reset menu and its modals) and
+`UpdatePrompt.svelte` (SW registration + update dialog) are plain Svelte components
+imported by every page's `pages/<name>.js`. There is **no** build-time HTML
+inlining — the old `libs/templater` + `<template x-src>` mechanism is gone. The
+navbar marks the active link at runtime (`isCurrent()` reads `location.pathname`).
 
 ### Build / serve
 
-`nx build pwa`: **vendor** (`tools/vendor-pwa-assets.mjs` → copies alpine/pico/pglite
-into `src/assets`, regenerates `precache.json`) → **copy-app** (`src` → `dist/pwa`)
-→ **templater** (`nx generate @tomsy/templater:build-templates`, inlines includes in
-`dist/pwa`). `serve` depends on `build` and serves `dist/pwa` (placeholders only
-resolve at build time, so editing `src`/`templates` needs a rebuild).
+`nx build pwa` (output `dist/pwa`):
 
-### Offline + updates (`sw.js`)
+1. **vendor** — `tools/vendor-pglite.mjs` copies the PGLite runtime
+   (index.js, chunks, `pglite.wasm`/`.data`, `initdb.wasm`) into
+   `apps/pwa/public/assets/pglite` (gitignored) so Vite copies it verbatim.
+2. **vite build** — bundles the Svelte UI + Pico CSS into hashed assets, rewrites
+   the 5 `.html` entries, and copies `public/` (the SW, manifest, icons, PGLite) to
+   the output root.
+3. **gen-precache** — `tools/gen-precache.mjs` walks `dist/pwa` and writes
+   `precache.json` (the SW's precache list, including Vite's hashed bundle names),
+   excluding `sw.js`, `app-sw.js`, `precache.json`.
 
-- Cache-first; precaches the app shell **and** the PGLite WASM/data so the DB
-  works with no network.
-- Does **not** `skipWaiting()` on install. `update-prompt.html` (included via the
-  navbar on every page) detects a waiting worker and shows
-  "Update is available. Do you want to update?"; confirming posts `SKIP_WAITING`
-  and reloads, declining keeps the current version and re-prompts next launch.
+`nx dev pwa` runs the Vite dev server (fast iteration). `nx serve` / `nx preview`
+depend on `build` and `http-server dist/pwa` on :4300 (the prod path the e2e and
+manual verification run against).
+
+### Offline + updates
+
+- `app-sw.js` is cache-first and precaches the app shell **and** the PGLite
+  WASM/data so the DB works with no network. It does **not** `skipWaiting()` on
+  install.
+- `UpdatePrompt.svelte` registers `app-sw.js` (`{ type: 'module' }`), detects a
+  waiting worker, and shows "A new version is available…"; confirming posts
+  `SKIP_WAITING` and reloads, declining re-prompts next launch.
+- `sw.js` is a **classic** kill-switch shim that owns the legacy `sw.js` URL: it
+  takes control, drops stale precaches, and steps aside for `app-sw.js`. It exists
+  so old clients (which registered `sw.js`) can migrate. User data in IndexedDB is
+  untouched.
 
 ## apps/pwa-e2e
 
@@ -118,16 +141,19 @@ the app uses only relative paths so it works under that subpath.
 
 ## Conventions & gotchas
 
-- **Bump the SW cache** (`const CACHE = 'expenses-pwa-vN'` in `sw.js`) whenever you
-  change anything that gets cached, so clients pick it up.
-- Alpine components are written **inline** in `x-data` on each page (no
-  `Alpine.data` registration — `app.js` loads PGLite and may run after Alpine starts).
-- An inline `x-data` attribute can't contain a literal `"` — build quote chars with
-  `String.fromCharCode(34)` (see the blotter total heading).
-- `desc` is a reserved SQL word; the column is `description` (aliased `AS desc` in SELECTs).
+- **Bump the SW cache** (`const CACHE = 'expenses-pwa-vN'` in `public/app-sw.js`)
+  whenever you change anything that gets cached, so clients pick it up.
+- UI is **Svelte 5 runes** (`$state`/`$derived`/`$effect`). One root component per
+  page; shared chrome is `Navbar`/`UpdatePrompt`. Per-row canvas drawing (budget
+  bars) uses a Svelte `use:` action; the charts pie draws after `await tick()`.
+- `desc` is a reserved SQL word; the column is `description` (aliased `AS desc`).
 - Amount inputs accept `.` or `,` as the decimal separator.
-- After verifying in a browser, the workflow has been: build to `dist/pwa`, serve
-  with `http-server`, drive it, then commit. Vendored `assets/` and `precache.json`
-  are gitignored (regenerated by the build).
+- Keep visible strings/roles stable — the e2e selectors are role/text based (e.g.
+  blotter's "Loading expenses…" / "No expenses yet.").
+- After verifying in a browser, the workflow has been: `nx build pwa`, serve
+  `dist/pwa` with `http-server`, drive it, then commit. Vendored
+  `public/assets/pglite` (and `dist/`) are gitignored (regenerated by the build).
+  Note: a service worker registered on a `localhost:PORT` during earlier dev can
+  serve a stale shell — test on a fresh port or let the `sw.js` shim migrate it.
 - Root `package.json` `scripts` still point at the legacy `web` app; use
-  `nx build pwa` / `nx serve pwa` for the real app.
+  `nx build pwa` / `nx serve pwa` / `nx dev pwa` for the real app.

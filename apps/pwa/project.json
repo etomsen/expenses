@@ -7,7 +7,7 @@
     "vendor": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "node tools/vendor-pwa-assets.mjs"
+        "command": "node tools/vendor-pglite.mjs"
       }
     },
     "build": {
@@ -17,9 +17,16 @@
       "options": {
         "parallel": false,
         "commands": [
-          "node tools/copy-app.mjs apps/pwa/src dist/pwa",
-          "nx generate @tomsy/templater:build-templates --htmlDir=dist/pwa --templatesDir=apps/pwa/templates --no-interactive"
+          "vite build --config apps/pwa/vite.config.js",
+          "node tools/gen-precache.mjs dist/pwa"
         ]
+      }
+    },
+    "dev": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["vendor"],
+      "options": {
+        "command": "vite --config apps/pwa/vite.config.js"
       }
     },
     "serve": {

@@ -58,6 +58,17 @@ jobs:
           path: dist/*-e2e/playwright-report/
           if-no-files-found: ignore
           retention-days: 14
+      # On failure, also keep the raw run output: traces, videos, and — for the
+      # snapshot tests — the *-actual/*-expected/*-diff PNGs, which live in
+      # test-results (Playwright's outputDir), not in the HTML report folder.
+      - name: Upload Playwright traces & snapshot diffs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: dist/*-e2e/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
 
   # Determine which deployable projects were touched, so each deploy job below
   # only runs when its project actually changed (the re-finflow "generate
